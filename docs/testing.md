@@ -45,4 +45,18 @@ To test with a real project:
 3. Render a few frames from both apps at the same times and compare them.
 4. Read `*.import-report.json`. Anything in `failedValues` or `unsupported` that isn't explained in [coverage.md](coverage.md) is either a bug or a gap. Note it down with its match name.
 
-First real-world target: `C:\Users\Yohan\Documents\Editing\lily allen nonmonogomummy\nonmummy .aep`. It's a lyric visualiser with an MP3, PNG, WebP and GIF stills. Those footage types were checked to import in EffectCraft 0.6.0, and the GIF imports as a still.
+### Real project: Lily Allen visualiser (9 October 2026)
+
+The source was `nonmummy .aep`, exported from After Effects 17.1 (AE 2020): 8 comps, 42 layers, 53 keyframes, 6 expressions, 16 masks and 3 effects (Drop Shadow, Fill, Gradient Ramp). After the footage fix, importing it in the app gave:
+
+```
+footage 10 imported, 0 placeholders; comps 8, layers 42, effects 3, masks 16,
+props 75, keys 53, expressions 6; nothing unsupported or failed
+note: kOnzy.gif is animated in AE but EffectCraft imports it as a still
+```
+
+Two problems showed up in the first attempt:
+- The first exporter version read every hidden property (about 5,500), which made After Effects freeze for a long time. It now reads only modified ones (75).
+- Every footage item became a placeholder because of the `File.exists` restriction.
+
+Before the import, the footage types in that folder (MP3, PNG, WebP, GIF) were checked to import in EffectCraft 0.6.0. The GIF came in as a still.

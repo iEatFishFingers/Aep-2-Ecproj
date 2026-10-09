@@ -1,0 +1,33 @@
+{
+ "format": "ae2ec",
+ "formatVersion": 1,
+ "exporter": "AE2EC_Export.jsx 1.0.0",
+ "exportedAt": "Fri Oct 09 2026 19:13:24 GMT+0100",
+ "host": {
+  "app": "17.1.3x40",
+  "build": "17.1.3x40"
+ },
+ "options": {
+  "selectedOnly": false,
+  "includeUnmodified": true
+ },
+ "project": {
+  "file": null,
+  "name": "Untitled",
+  "bitsPerChannel": 8,
+  "workingSpace": "None",
+  "linearBlending": false,
+  "expressionEngine": "javascript-1.0",
+  "activeItemId": null
+ },
+ "stats": {
+  "comps": 0,
+  "layers": 0,
+  "footage": 0,
+  "props": 0,
+  "keys": 0,
+  "expressions": 0
+ },
+ "items": [],
+ "renderQueue": []
+}

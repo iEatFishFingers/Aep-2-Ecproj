@@ -17,16 +17,29 @@ You can also make the script appear in the **File ▸ Scripts** menu by copying 
    | Option | Default | Meaning |
    |---|---|---|
    | Only comps selected in the Project panel | off | Export only the selected comps, plus every precomp, footage item and folder they use. |
-   | Include values left at their defaults | **on** | Writes every readable property value, flagged as modified or not. This makes the file bigger but complete. The importer still skips unmodified values unless you ask it not to. |
+   | Also write values left at their defaults | off | Also reads and writes properties you never touched. This is much slower and makes the file much bigger. It's only useful together with the importer's `-ApplyAll`. |
    | Readable JSON | **on** | Indented output, which is easier to read and diff in git. Turn it off for very large projects. |
 
 4. Choose where to save. The default is `<project>.ae2ec.json` next to the `.aep`.
 
-Progress appears in the **Info** panel. When the export finishes, a summary shows the number of comps, layers, properties, keyframes and expressions.
+A progress window shows which comp and layer are being exported. When the export finishes, a summary shows the number of comps, layers, properties, keyframes and expressions.
+
+The exporter also writes a log next to the export (`<project>.ae2ec.log`), with one line when each layer starts and one when it finishes, including the time it took.
+
+### If After Effects says "Not responding"
+
+AE doesn't redraw its window while a script runs, so Windows may label it *Not responding* even while the export is still working. Here's what to do:
+
+- Watch the log file. If new lines keep appearing, it's working.
+- If the log hasn't changed for several minutes, its last `start` line shows the layer it's stuck on. End AE in Task Manager (your `.aep` on disk isn't touched by the exporter) and report that layer.
+- Leave **Also write values left at their defaults** off. Untouched properties are then skipped without being read, and that's most of them.
+- Use **Only comps selected in the Project panel** to export a big project in parts.
 
 ## 2. Import into EffectCraft
 
-### Option A: headless, to a new `.ecproj` (recommended)
+> **Tip:** importing from inside the app (option B, C or D) is the most reliable way to link footage. If a headless import leaves placeholders, open the project and run `effectcraft\AE2EC_Relink.jsx` (see [Relinking footage](#relinking-footage)).
+
+### Option A: headless, to a new `.ecproj`
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\import.ps1 -Json "C:\...\nonmummy .ae2ec.json"
@@ -66,6 +79,17 @@ With the EffectCraft MCP connected, ask Claude to import the export file. Claude
 | `-Cli <path>` | `effectcraft-cli.exe` if it's not in `C:\Program Files\EffectCraft`. |
 | `-KeepScript` | Keep the generated `*.ae2ec-import.jsx` instead of deleting it. |
 
+### Relinking footage
+
+When a file can't be imported, the importer creates a placeholder and stores the original path in the placeholder's comment (`ae2ec:<path>`). To fix those placeholders:
+
+1. Open the project in EffectCraft.
+2. Go to **File ▸ Scripts ▸ Run Script File…** and choose `effectcraft\AE2EC_Relink.jsx`.
+
+It replaces every placeholder with the file at its stored path, and prints what it relinked and what's still missing.
+
+If the footage has moved, re-run the import with `-PathMap "old=>new"`. Alternatively, build a copy of the relink script that starts with `var AE2EC_RELINK_FOLDER = "D:/new/folder";`, and it will also look for each file by name in that folder.
+
 ## 3. The report
 
 `<project>.import-report.json` has these sections. The script also prints a summary.
@@ -73,7 +97,7 @@ With the EffectCraft MCP connected, ask Claude to import the export file. Claude
 | Section | What to do |
 |---|---|
 | `counts` | What was created. Compare it with the exporter's summary. |
-| `missingFootage` | Files that weren't found and were replaced with placeholders. Relink them in EffectCraft, or re-import with `-PathMap`. |
+| `missingFootage` | Files that couldn't be imported, each with the path tried and the error. They were replaced with placeholders, so run `AE2EC_Relink.jsx` or re-import with `-PathMap`. |
 | `missingEffects` | Effects EffectCraft doesn't have, usually third-party plug-ins (Trapcode, Element, Saber…). Rebuild the look with built-in effects. |
 | `customValues` | Effect data that AE scripting can't read, such as the curve in **Curves**. The effect is added with default settings, so redo those settings by hand. |
 | `unsupported` | Properties or groups EffectCraft doesn't have under that match name. |

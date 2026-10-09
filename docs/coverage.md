@@ -9,7 +9,7 @@
 | Folders and hierarchy | ✅ | |
 | Comps and settings (size, fps, duration, bg colour, work area, motion blur, shy, nested options) | ✅ | |
 | Comp markers | ✅ | |
-| File footage (video, stills, audio) | ☑️ | Imported from the original path, optionally remapped. Missing files become placeholders. |
+| File footage (video, stills, audio) | ✅ | Imported from the original path, optionally remapped. Files that can't be imported become placeholders, which `AE2EC_Relink.jsx` fixes. Verified on the Lily Allen project (PNG, GIF, MP3). |
 | Image sequences | ☑️ | Detected when AE says the file isn't a still and the extension is an image format. |
 | Footage interpretation (alpha mode, conform fps, loop, fields) | ☑️ | Set when EffectCraft has the attribute. |
 | Animated GIF | ⚠️ | EffectCraft 0.6.0 imports GIFs as stills. The report flags this, so convert the GIF to a video. |
@@ -66,3 +66,5 @@
 - A spatial keyframe's temporal ease can come back with 3 entries instead of 1. The values are the same.
 - Scripts can't `eval` or include other files (`$.evalFile`), and can only read files in the project's folder. That's why `build-script.ps1` exists.
 - `SolidSource`, `FileSource` and `PlaceholderSource` don't exist as classes, so the exporter falls back to checking the source's properties.
+- `File.exists` is `false` for any file outside the saved project's folder, but `importFile` works anywhere. The importer therefore imports directly instead of checking first. The first real import (Lily Allen project) turned every footage item into a placeholder because of this, and it's fixed in importer 1.0.1.
+- `String.prototype.substr` doesn't exist. Use `substring`.

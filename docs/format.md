@@ -15,7 +15,7 @@ The format is a single UTF-8 JSON file, conventionally named `<project>.ae2ec.js
   "project": { "file": "C:\\…\\nonmummy .aep", "name": "nonmummy .aep", "bitsPerChannel": 8,
                "workingSpace": "", "linearBlending": false, "expressionEngine": "javascript-1.0",
                "activeItemId": 12 },
-  "stats": { "comps": 0, "layers": 0, "footage": 0, "props": 0, "keys": 0, "expressions": 0 },
+  "stats": { "comps": 0, "layers": 0, "footage": 0, "props": 0, "keys": 0, "expressions": 0, "skipped": 0 },
   "items": [ … ],                                       // in AE's Project panel order
   "renderQueue": [ { "compId": 12, "output": "C:\\…\\out.mov", "timeSpanStart": 0, "timeSpanDuration": 10 } ]
 }
@@ -127,6 +127,13 @@ The property tree is a direct mirror of AE's `PropertyGroup` / `Property` object
 - **TEXT_DOCUMENT**: `{ "text", "font" (PostScript name), "fontFamily", "fontStyle", "fontSize", "applyFill", "fillColor", "applyStroke", "strokeColor", "strokeWidth", "strokeOverFill", "tracking", "leading", "autoLeading", "justification" (name), "baselineShift", "horizontalScale", "verticalScale", "fauxBold", "fauxItalic", "allCaps", "smallCaps", "superscript", "subscript", "tsume", "boxText", "pointText", "boxTextSize", "boxTextPos", indents and spacing… }`. Only the fields AE could read are present.
 - **MARKER**: `{ "comment", "duration", "chapter", "url", "frameTarget", "cuePointName", "eventCuePoint", "label", "protectedRegion", "params": {…} }`.
 - **LAYER_INDEX / MASK_INDEX**: plain numbers (layer or mask index, with 0 meaning none).
+
+## What gets written
+
+By default (`includeUnmodified: false`), a property is written only if AE reports it as modified, or it has keyframes or an expression. Text documents and shape paths are always written. Some groups are skipped entirely when they can't apply:
+- Material Options and Geometry Options on 2D layers
+- the Audio group on layers without audio
+- layer styles that aren't switched on
 
 ## Versioning
 

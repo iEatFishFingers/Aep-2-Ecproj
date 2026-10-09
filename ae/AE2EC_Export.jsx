@@ -75,26 +75,22 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
     };
 
     // ------------------------------------------------------------------ JSON
-    function quote(s) {
-        var out = ['"'];
-        var i, c, code, hex;
-        s = String(s);
-        for (i = 0; i < s.length; i++) {
-            c = s.charAt(i);
-            code = s.charCodeAt(i);
-            if (c === '"') { out.push('\\"'); }
-            else if (c === "\\") { out.push("\\\\"); }
-            else if (c === "\n") { out.push("\\n"); }
-            else if (c === "\r") { out.push("\\r"); }
-            else if (c === "\t") { out.push("\\t"); }
-            else if (code < 32 || code > 126) {
-                hex = code.toString(16);
-                while (hex.length < 4) { hex = "0" + hex; }
-                out.push("\\u" + hex);
-            } else { out.push(c); }
+    var ESCAPE_RE = /[\\"\u0000-\u001f\u007f-\uffff]/g;
+    function escapeChar(c) {
+        switch (c) {
+            case '"': return '\\"';
+            case "\\": return "\\\\";
+            case "\n": return "\\n";
+            case "\r": return "\\r";
+            case "\t": return "\\t";
         }
-        out.push('"');
-        return out.join("");
+        var hex = c.charCodeAt(0).toString(16);
+        while (hex.length < 4) { hex = "0" + hex; }
+        return "\\u" + hex;
+    }
+    // one regex pass instead of a per-character loop (much faster in ExtendScript)
+    function quote(s) {
+        return '"' + String(s).replace(ESCAPE_RE, escapeChar) + '"';
     }
 
     function isArray(v) { return v instanceof Array; }
@@ -301,58 +297,59 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
     }
 
     function serLeaf(p, opts, stats) {
-        var node = { mn: p.matchName, n: p.name, pt: "P" };
+        var mn = String(p.matchName);
         var vt = vtName(p);
-        node.vt = vt;
 
-        // Separated dimensions (Position -> X/Y/Z Position)
-        var isLeader = tryGet(function () { return p.isSeparationLeader; }, false);
-        var isFollower = tryGet(function () { return p.isSeparationFollower; }, false);
-        if (isFollower) {
-            var leaderSep = tryGet(function () { return p.separationLeader.dimensionsSeparated; }, false);
-            if (!leaderSep) { return null; }
-        }
-        if (isLeader && tryGet(function () { return p.dimensionsSeparated; }, false)) {
-            node.sep = true;
-            return node;
+        // Separated dimensions (Position -> X/Y/Z Position); only transform Position has them
+        if (mn.substring(0, 13) === "ADBE Position") {   // (substring: EffectCraft has no substr)
+            if (tryGet(function () { return p.isSeparationFollower; }, false)) {
+                if (!tryGet(function () { return p.separationLeader.dimensionsSeparated; }, false)) { return null; }
+            } else if (tryGet(function () { return p.isSeparationLeader && p.dimensionsSeparated; }, false)) {
+                stats.props++;
+                return { mn: mn, n: p.name, pt: "P", vt: vt, sep: true };
+            }
         }
 
         var mod = tryGet(function () { return p.isModified; }, undefined);
-        if (mod !== undefined) { node.mod = mod; }
-
-        var hasData = false;
         var nk = tryGet(function () { return p.numKeys; }, 0);
+        var ex = "";
+        if (tryGet(function () { return p.canSetExpression; }, false)) {
+            ex = tryGet(function () { return p.expression; }, "") || "";
+        }
+
+        // Fast path: an untouched property at its default is skipped without reading its value.
+        if (nk === 0 && !ex && mod === false && !opts.includeUnmodified &&
+                vt !== "TEXT_DOCUMENT" && vt !== "SHAPE") {
+            stats.skipped++;
+            return null;
+        }
+
+        var node = { mn: mn, n: p.name, pt: "P", vt: vt };
+        if (mod !== undefined) { node.mod = mod; }
+        var hasData = false;
+
         if (nk > 0) {
             node.k = serKeys(p, vt, stats);
             hasData = true;
-        } else if (vt !== "NO_VALUE" && vt !== "CUSTOM_VALUE") {
+        } else if (vt === "CUSTOM_VALUE") {
+            if (mod !== false) { node.custom = true; hasData = true; }   // e.g. Curves: unreadable by scripts
+        } else if (vt !== "NO_VALUE") {
             var ok = true, raw;
             // with an expression, .value is the expression's result: read the value underneath
-            var hasExpr = tryGet(function () { return p.canSetExpression && p.expression !== ""; }, false);
-            try { raw = hasExpr ? p.valueAtTime(0, true) : p.value; } catch (eVal) { ok = false; }
+            try { raw = ex ? p.valueAtTime(0, true) : p.value; } catch (eVal) { ok = false; }
             if (ok) {
                 var v = serValue(vt, raw);
-                if (v !== undefined && (opts.includeUnmodified || mod !== false || vt === "TEXT_DOCUMENT" || vt === "SHAPE")) {
-                    node.v = v;
-                }
-                hasData = true;
+                if (v !== undefined) { node.v = v; hasData = true; }
             }
-        } else if (vt === "CUSTOM_VALUE" && mod !== false) {
-            // e.g. Curves / Levels data: cannot be read by scripts, so flag it for the report
-            node.custom = true;
-            hasData = true;
         }
 
-        if (tryGet(function () { return p.canSetExpression; }, false)) {
-            var ex = tryGet(function () { return p.expression; }, "");
-            if (ex) {
-                node.x = ex;
-                node.xe = tryGet(function () { return p.expressionEnabled; }, true);
-                var err = tryGet(function () { return p.expressionError; }, "");
-                if (err) { node.xerr = err; }
-                stats.expressions++;
-                hasData = true;
-            }
+        if (ex) {
+            node.x = ex;
+            node.xe = tryGet(function () { return p.expressionEnabled; }, true);
+            var err = tryGet(function () { return p.expressionError; }, "");
+            if (err) { node.xerr = err; }
+            stats.expressions++;
+            hasData = true;
         }
 
         if (!hasData) { return null; }      // hidden/inaccessible property
@@ -360,8 +357,24 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         return node;
     }
 
+    // Groups that only matter in some situations; skipping them saves most of the time.
+    function skipGroup(g, opts) {
+        var mn = g.matchName, L = opts.curLayer || {};
+        if (!L.threeD && (mn === "ADBE Material Options Group" || mn === "ADBE Plane Options Group" ||
+                mn === "ADBE Extrsn Options Group")) { return true; }
+        if (!L.hasAudio && mn === "ADBE Audio Group") { return true; }
+        if (opts.inLayerStyles && mn !== "ADBE Blend Options Group" && mn !== "ADBE Layer Styles") {
+            // a layer style that is not switched on is not applied
+            return tryGet(function () { return g.enabled; }, false) !== true;
+        }
+        return false;
+    }
+
     function serGroup(g, opts, stats, parentPt) {
+        if (skipGroup(g, opts)) { stats.skipped++; return null; }
         var node = { mn: g.matchName, n: g.name, pt: ptName(g) };
+        var stylesRoot = (g.matchName === "ADBE Layer Styles");
+        if (stylesRoot) { opts.inLayerStyles = true; }
         if (tryGet(function () { return g.canSetEnabled; }, false)) {
             node.en = tryGet(function () { return g.enabled; }, true);
         }
@@ -376,6 +389,13 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         for (i = 1; i <= n; i++) {
             c = serNode(tryGet((function (idx) { return function () { return g.property(idx); }; })(i), null), opts, stats, node.pt);
             if (c) { ch.push(c); }
+        }
+        if (stylesRoot) {
+            opts.inLayerStyles = false;
+            // keep Layer Styles only when at least one style (not just Blending Options) is on
+            var anyStyle = false, s2;
+            for (s2 = 0; s2 < ch.length; s2++) { if (ch[s2].mn !== "ADBE Blend Options Group") { anyStyle = true; } }
+            if (!anyStyle) { return null; }
         }
         if (ch.length) { node.ch = ch; }
         if (!ch.length && parentPt !== "I" && node.en === undefined) { return null; }
@@ -428,6 +448,11 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
 
     function serLayer(l, opts, stats) {
         var out = { index: l.index, name: l.name, type: layerType(l) };
+        opts.curLayer = {
+            threeD: tryGet(function () { return l.threeDLayer; }, false) || out.type === "camera" || out.type === "light",
+            hasAudio: tryGet(function () { return l.hasAudio; }, false)
+        };
+        opts.inLayerStyles = false;
         var a = {}, i, v;
         for (i = 0; i < LAYER_ATTRS.length; i++) {
             v = tryGet((function (f) { return function () { return l[f]; }; })(LAYER_ATTRS[i]), undefined);
@@ -514,9 +539,13 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         var mp = tryGet(function () { return c.markerProperty; }, null);
         if (mp && mp.numKeys > 0) { o.markers = serKeys(mp, "MARKER", stats); }
         var layers = [], i;
+        var t0, lay;
         for (i = 1; i <= c.numLayers; i++) {
-            if (opts.progress) { opts.progress(c.name, i, c.numLayers); }
-            layers.push(serLayer(c.layer(i), opts, stats));
+            lay = c.layer(i);
+            if (opts.progress) { opts.progress(c.name, i, c.numLayers, lay.name); }
+            t0 = new Date().getTime();
+            layers.push(serLayer(lay, opts, stats));
+            if (opts.onLayer) { opts.onLayer(c.name, i, c.numLayers, lay.name, new Date().getTime() - t0); }
         }
         o.layers = layers;
         stats.comps++;
@@ -607,9 +636,9 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
      */
     X.exportProject = function (opts) {
         opts = opts || {};
-        if (opts.includeUnmodified === undefined) { opts.includeUnmodified = true; }
+        if (opts.includeUnmodified === undefined) { opts.includeUnmodified = false; }
         var proj = app.project;
-        var stats = { comps: 0, layers: 0, footage: 0, props: 0, keys: 0, expressions: 0 };
+        var stats = { comps: 0, layers: 0, footage: 0, props: 0, keys: 0, expressions: 0, skipped: 0 };
 
         var keep = null;
         if (opts.selectedOnly) {
@@ -696,8 +725,8 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         var p = w.add("panel", undefined, "Options");
         p.alignChildren = ["left", "top"];
         var cbSel = p.add("checkbox", undefined, "Only comps selected in the Project panel (+ what they use)");
-        var cbAll = p.add("checkbox", undefined, "Include values left at their defaults (recommended)");
-        cbAll.value = true;
+        var cbAll = p.add("checkbox", undefined, "Also write values left at their defaults (slower, bigger file)");
+        cbAll.value = false;
         var cbPretty = p.add("checkbox", undefined, "Readable JSON (indented)");
         cbPretty.value = true;
         var g = w.add("group");
@@ -722,15 +751,61 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         var target = new File(base + ".ae2ec.json").saveDlg("Save ae2ec export as", "ae2ec JSON:*.json");
         if (!target) { return; }
 
+        // progress window + log file (the log shows where it got to if AE ever stalls)
+        var logPath = target.fsName.replace(/\.json$/i, "") + ".log";
+        var log = new File(logPath);
+        log.encoding = "UTF-8";
+        function logLine(t) {
+            try { if (log.open("a")) { log.writeln(t); log.close(); } } catch (eLog) { }
+        }
+        try { if (log.open("w")) { log.writeln("ae2ec export " + new Date().toString()); log.close(); } } catch (eL0) { }
+
+        var totalLayers = 0, doneLayers = 0, k;
+        for (k = 1; k <= app.project.numItems; k++) {
+            if (app.project.item(k) instanceof CompItem) { totalLayers += app.project.item(k).numLayers; }
+        }
+        var pw = null, bar = null, label = null;
+        try {
+            pw = new Window("palette", "Exporting to EffectCraft (ae2ec)");
+            pw.alignChildren = ["fill", "top"];
+            label = pw.add("statictext", undefined, "Starting...", { truncate: "middle" });
+            label.preferredSize = [420, 20];
+            bar = pw.add("progressbar", undefined, 0, Math.max(totalLayers, 1));
+            bar.preferredSize = [420, 12];
+            pw.show();
+        } catch (eW) { pw = null; }
+
         var lastShown = 0;
-        opts.progress = function (comp, i, n) {
+        opts.progress = function (comp, i, n, layerName) {
+            logLine(comp + " | layer " + i + "/" + n + " | " + layerName + " | start");
             var now = new Date().getTime();
-            if (now - lastShown > 500) { lastShown = now; clearOutput(); writeLn("ae2ec: " + comp + "  layer " + i + "/" + n); }
+            if (now - lastShown > 200) {
+                lastShown = now;
+                if (pw) {
+                    label.text = comp + "  -  layer " + i + "/" + n + ": " + layerName;
+                    bar.value = doneLayers;
+                    pw.update();
+                }
+            }
+        };
+        opts.onLayer = function (comp, i, n, layerName, ms) {
+            doneLayers++;
+            logLine(comp + " | layer " + i + "/" + n + " | " + layerName + " | done in " + ms + " ms");
         };
 
         var t0 = new Date().getTime();
-        var res = X.exportProject(opts);
-        var text = X.stringify(res.data, opts.pretty ? " " : "");
+        var res, text;
+        try {
+            res = X.exportProject(opts);
+            if (pw) { label.text = "Writing JSON..."; pw.update(); }
+            logLine("layers done, writing JSON");
+            text = X.stringify(res.data, opts.pretty ? " " : "");
+        } catch (eExp) {
+            logLine("FAILED: " + eExp.toString() + (eExp.line ? " (line " + eExp.line + ")" : ""));
+            if (pw) { pw.close(); }
+            throw eExp;
+        }
+        if (pw) { pw.close(); }
         try {
             X.writeTextFile(target.fsName, text);
         } catch (eWrite) {
@@ -738,6 +813,7 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
                 "\"Allow Scripts to Write Files and Access Network\".");
             return;
         }
+        logLine("done: " + Math.round(text.length / 1024) + " KB in " + Math.round((new Date().getTime() - t0) / 1000) + " s");
         var secs = Math.round((new Date().getTime() - t0) / 100) / 10;
         var s = res.stats;
         clearOutput();
@@ -745,6 +821,7 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         alert("Exported to:\n" + target.fsName + "\n\n" +
             s.comps + " comps, " + s.layers + " layers, " + s.footage + " footage items\n" +
             s.props + " properties, " + s.keys + " keyframes, " + s.expressions + " expressions\n" +
+            "(" + s.skipped + " untouched properties skipped)\n" +
             (Math.round(text.length / 1024)) + " KB in " + secs + " s\n\n" +
             "Next: import it into EffectCraft (see README).");
     };

@@ -19,7 +19,7 @@
 
 var AE2EC_IMPORT = (function () {
 
-    var VERSION = "1.0.0";
+    var VERSION = "1.0.1";
 
     var DEFAULTS = {
         applyAll: false,         // also set properties AE reported as unmodified
@@ -224,7 +224,8 @@ var AE2EC_IMPORT = (function () {
                 try { if (c.n && p.name !== c.n) { p.name = c.n; } } catch (e2) { }
             } else {
                 p = findChild(group, c);
-                if (!p) { bump(R.unsupported, c.mn); continue; }
+                // only report missing properties that carry something the user changed
+                if (!p) { if (anyModified(c)) { bump(R.unsupported, c.mn); } continue; }
             }
             applyNode(p, c, opts, ctx);
         }
@@ -288,27 +289,28 @@ var AE2EC_IMPORT = (function () {
 
     function importFootage(it, opts) {
         if (it.kind === "solid") { return null; }      // solids are recreated per layer
-        var item = null;
+        var item = null, path = null, why = null;
         if (it.kind === "file" && it.file) {
-            var path = remapPath(it.file, opts);
-            var f = new File(path);
-            if (f.exists) {
-                try {
-                    var io = new ImportOptions(f);
-                    if (it.sequence) { try { io.sequence = true; } catch (e0) { } }
-                    item = app.project.importFile(io);
-                    R.counts.footage++;
-                } catch (e1) {
-                    note("Could not import " + path + ": " + e1);
-                }
+            path = remapPath(it.file, opts);
+            // Import straight away: EffectCraft only lets scripts *check* files inside the
+            // project's folder (File.exists is false elsewhere), but importing works anywhere.
+            try {
+                var io = new ImportOptions(new File(path));
+                if (it.sequence) { try { io.sequence = true; } catch (e0) { } }
+                item = app.project.importFile(io);
+                R.counts.footage++;
+            } catch (e1) {
+                why = String(e1);
             }
-            if (!item) { R.missingFootage.push({ name: it.name, file: it.file }); }
+            if (!item) { R.missingFootage.push({ name: it.name, file: it.file, tried: path, error: why }); }
         }
         if (!item) {
             try {
                 item = app.project.importPlaceholder(it.name, it.width || 1920, it.height || 1080,
                     it.frameRate || 30, it.duration || 10);
                 R.counts.placeholders++;
+                // remember where the file should be, for effectcraft/AE2EC_Relink.jsx
+                if (path) { try { item.comment = "ae2ec:" + path; } catch (eC) { } }
             } catch (e2) { note("Could not create placeholder for " + it.name + ": " + e2); return null; }
         }
         try { item.name = it.name; } catch (e3) { }
@@ -326,7 +328,7 @@ var AE2EC_IMPORT = (function () {
             if (ip.loop && ip.loop > 1) { setIf(ms, "loop", ip.loop); }
             setIf(ms, "fieldSeparationType", enumVal("FieldSeparationType", ip.fieldSeparationType));
         }
-        if (it.pixelAspect) { setIf(item, "pixelAspect", it.pixelAspect); }
+        try { if (it.pixelAspect && Math.abs(item.pixelAspect - it.pixelAspect) > 0.0001) { setIf(item, "pixelAspect", it.pixelAspect); } } catch (e5) { }
         return item;
     }
 
@@ -466,7 +468,7 @@ var AE2EC_IMPORT = (function () {
                 ctx.path = comp.name + " > " + L.name + " > " + n.n;
                 if (n.mn === "ADBE Layer Styles") { applyLayerStyles(lay, n, opts, ctx); continue; }
                 p = findChild(lay, n);
-                if (!p) { if (n.ch || n.k || n.x) { bump(R.unsupported, n.mn); } continue; }
+                if (!p) { if (anyModified(n)) { bump(R.unsupported, n.mn); } continue; }
                 try { applyNode(p, n, opts, ctx); } catch (e3) { note(ctx.path + ": " + e3); }
             }
         }
@@ -540,7 +542,11 @@ var AE2EC_IMPORT = (function () {
             var parent = it.parentId ? itemMap[it.parentId] : root;
             if (parent) { try { itemMap[it.id].parentFolder = parent; } catch (e2) { } }
             if (it.label !== undefined) { setIf(itemMap[it.id], "label", it.label); }
-            if (it.comment) { setIf(itemMap[it.id], "comment", it.comment); }
+            if (it.comment) {
+                var cur = "";
+                try { cur = String(itemMap[it.id].comment || ""); } catch (eCm) { }
+                if (cur.indexOf("ae2ec:") !== 0) { setIf(itemMap[it.id], "comment", it.comment); }   // keep relink info
+            }
         }
         for (i = 0; i < items.length; i++) {              // 5. layers
             it = items[i];

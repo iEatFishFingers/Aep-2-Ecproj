@@ -74,15 +74,20 @@ $script = "$base.ae2ec-import.jsx"
 & (Join-Path $here 'build-script.ps1') -Json $jsonPath -OptionsJson $optsJson -Out $script | Out-Null
 
 # ---- run it
+# effectcraft-cli writes progress ("saved ...") to stderr. Windows PowerShell 5.1 turns that into
+# an error record when $ErrorActionPreference is Stop, so relax it for the native call.
+$prevPref = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 if ($Live) {
     Write-Host "Importing into the open EffectCraft window (port $Port)..." -ForegroundColor Cyan
-    $output = & $Cli script $script --bridge $Port 2>&1 | Out-String
+    $output = & $Cli script $script --bridge $Port 2>&1 | ForEach-Object { "$_" } | Out-String
 } else {
     if (-not $Out) { $Out = "$base.ecproj" }
     Write-Host "Importing headless into $Out ..." -ForegroundColor Cyan
-    $output = & $Cli script $script --save-as $Out 2>&1 | Out-String
+    $output = & $Cli script $script --save-as $Out 2>&1 | ForEach-Object { "$_" } | Out-String
 }
 $exit = $LASTEXITCODE
+$ErrorActionPreference = $prevPref
 
 # ---- report
 $report = $null
@@ -117,7 +122,13 @@ function Show-Map($title, $map) {
 if ($report.missingFootage -and $report.missingFootage.Count) {
     Write-Host ''
     Write-Host 'Missing footage (placeholders created):' -ForegroundColor Yellow
-    $report.missingFootage | ForEach-Object { Write-Host "  $($_.name)  <-  $($_.file)" }
+    $report.missingFootage | ForEach-Object {
+        Write-Host "  $($_.name)  <-  $($_.file)"
+        if ($_.error) { Write-Host "      $($_.error)" -ForegroundColor DarkGray }
+    }
+    Write-Host '  Fix: open the project in EffectCraft and run File > Scripts > Run Script File... >' -ForegroundColor Yellow
+    Write-Host "       $(Join-Path (Split-Path -Parent $here) 'effectcraft\AE2EC_Relink.jsx')" -ForegroundColor Yellow
+    Write-Host '       (or re-run this import with -Live, which imports from inside the app)' -ForegroundColor Yellow
 }
 Show-Map 'Effects EffectCraft does not have:' $report.missingEffects
 Show-Map 'Properties not found in EffectCraft:' $report.unsupported
