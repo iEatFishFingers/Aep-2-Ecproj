@@ -1,0 +1,12 @@
+# test scratch project (EffectCraft scripts may only read files under the saved project's folder)
+scratch.ecproj
+*.ecproj.autosave
+# generated combined scripts
+tests/build/
+*.ae2ec-import.jsx
+# your real exports / reports belong next to your projects, not here
+*.import-report.json
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
