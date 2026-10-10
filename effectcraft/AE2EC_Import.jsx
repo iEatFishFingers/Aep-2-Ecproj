@@ -57,13 +57,13 @@ var AE2EC_IMPORT = (function () {
     }
     function note(msg) { if (R.notes.length < 200) { R.notes.push(msg); } }
 
-    // EffectCraft engine commands with parameters. Scripts reach them through __call, an
-    // internal bridge (app.executeCommand drops parameters). Used for things the scripting
-    // model can't set: footage interpretation, track mattes on any layer, layer styles.
-    // If a future EffectCraft changes it, the importer falls back and reports what it skipped.
+    // EffectCraft engine commands with parameters, run with app.run(id, params): EffectCraft's
+    // public scripting call for any engine command (app.executeCommand takes only a command id).
+    // Used for things the scripting model can't set: footage interpretation, track mattes on any
+    // layer, layer styles. If a command fails, the importer carries on and reports what it skipped.
     function ec(id, params) {
-        if (typeof __call !== "function") { throw new Error("EffectCraft command bridge not available"); }
-        return __call(id, params || {});
+        if (typeof app.run !== "function") { throw new Error("app.run (EffectCraft engine commands) not available"); }
+        return app.run(id, params || {});
     }
 
     // ------------------------------------------------------------------ enums / values

@@ -12,7 +12,7 @@
 | File footage (video, stills, audio) | ✅ | Imported from the original path, optionally remapped. Files that can't be imported become placeholders, which `AE2EC_Relink.jsx` fixes. Verified on the Lily Allen project (PNG, GIF, MP3). |
 | Image sequences | ✅ | Detected when AE says the file isn't a still and the extension is an image format. Verified on 11 PNG sequences. If the files on disk have gaps or extra frames compared with what AE imported, the report says so. |
 | Footage interpretation (frame rate, alpha mode, loop, fields, pixel aspect) | ✅ | Set with EffectCraft's Interpret Footage command. EffectCraft imports image sequences at 30 fps, so their AE frame rate is restored. |
-| Animated GIF | ⚠️ | EffectCraft 0.6.0 imports GIFs as stills. The report flags this, so convert the GIF to a video. |
+| Animated GIF | ⚠️ | EffectCraft 0.6.0 imports GIFs as stills; 0.7.0 plays them. If a GIF comes in as a still, the report flags it, so convert the GIF to a video. |
 | Solids | ✅ | Recreated per layer. Unused solids in the Solids folder aren't recreated. |
 | Placeholders | ☑️ | |
 | Render queue | ❌ | Recorded in the export but not recreated. |
@@ -43,7 +43,7 @@
 | Temporal ease (speed and influence per dimension) | ✅ | |
 | Spatial tangents, continuous, auto-bezier | ✅ | |
 | Roving keyframes | ☑️ | |
-| Keyframe label colours | ⚠️ | EffectCraft 0.6.0 accepts the call but ignores it. |
+| Keyframe label colours | ⚠️ | EffectCraft (0.6.0 and 0.7.0) accepts the call but ignores it. |
 | Expressions (text and enabled state) | ✅ | Copied word for word, and the pre-expression value is kept underneath. |
 | Effects (all built-in AE effects, plus CC effects) | ✅ | Added by match name, falling back to the effect's AE display name and then its layer name (so e.g. `ADBE Noise2` finds EffectCraft's Noise). They're renamed and switched on or off. Parameters are matched by match name, name, then parameter number. |
 | Effect settings stored on different scales | ✅ | The importer rescales a value when AE's range differs from EffectCraft's in a known way (0..1, 0..100, 0..255). Examples are CC Jaws Completion and Drop Shadow Opacity. Exports from exporter 1.1+ carry AE's range for every setting, so new cases are handled automatically. |
@@ -60,16 +60,18 @@
 | Puppet pins, paint strokes, Roto Brush | ⚠️ | Attempted generically. Expect to redo them. |
 | Essential Graphics / properties | ❌ | |
 
-## EffectCraft 0.6.0 quirks found while testing
+## EffectCraft quirks found while testing
+
+These were found on EffectCraft 0.6.0 and rechecked on 0.7.0 (10 October 2026). They all still apply unless the item says otherwise.
 
 - `isModified` always returns `false`. This only matters if you export *from* EffectCraft, as the test does, which is why the test uses `applyAll`.
 - Some shape defaults can't be set by script: `ADBE Vector Blend Mode` and `ADBE Vector Shape Direction`. `threeDPerChar` can't be set either. AE marks these as unmodified, so a normal import doesn't touch them.
-- A spatial keyframe's temporal ease can come back with 3 entries instead of 1. The values are the same.
-- Scripts can't `eval` or include other files (`$.evalFile`), and can only read files in the project's folder. That's why `build-script.ps1` exists.
+- On 0.6.0, a spatial keyframe's temporal ease could come back with 3 entries instead of 1. The values were the same. 0.7.0 returns 1 entry.
+- Scripts can't include other files (`$.evalFile` throws), and can only read files in the project's folder unless **Allow Scripts to Write Files and Access Network** is on. That's why `build-script.ps1` exists.
 - `SolidSource`, `FileSource` and `PlaceholderSource` don't exist as classes, so the exporter falls back to checking the source's properties.
 - `File.exists` is `false` for any file outside the saved project's folder, but `importFile` works anywhere. The importer therefore imports directly instead of checking first. The first real import (Lily Allen project) turned every footage item into a placeholder because of this, and it's fixed in importer 1.0.1.
 - `String.prototype.substr` doesn't exist. Use `substring`.
-- Scripts can't change footage interpretation, and `app.executeCommand` drops parameters. The importer uses EffectCraft's internal `__call(commandId, params)` bridge for Interpret Footage, track mattes and layer styles. It's an internal API: if a future version removes it, those steps are skipped and listed in the report.
+- Scripts can't change footage interpretation, and `app.executeCommand` takes only a command id, with no parameters. The importer runs the engine commands for Interpret Footage, track mattes and layer styles with `app.run(commandId, params)`, EffectCraft's public scripting call for any engine command. If one of them fails, that step is skipped and listed in the report.
 - Setting a text document's stroke width or colour switches stroke on, even when `applyStroke = false` is set afterwards. So the importer leaves stroke fields alone when AE had stroke off.
 - A new text animator comes with a Range Selector already in it.
 - Items, layers and effect parameters have their own match names in some cases, e.g. CC Jaws is `ec.transition.ccjaws`, with parameters `ec.transition.ccjaws-0001…`.

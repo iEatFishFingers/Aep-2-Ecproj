@@ -9,7 +9,7 @@ EffectCraft implements After Effects' scripting model, so the exporter can run *
 3. A fresh project is created and the export is imported with the real importer.
 4. The new project is exported again and compared with the first export, item by item. IDs, timestamps and `isModified` flags are ignored.
 
-The test passes when the importer reports `ok`, there are zero differences, and no unexpected value failures occur. It allows for the known EffectCraft 0.6.0 quirks listed in [coverage.md](coverage.md).
+The test passes when the importer reports `ok`, there are zero differences, and no unexpected value failures occur. It allows for the known EffectCraft quirks listed in [coverage.md](coverage.md).
 
 ### Run it
 

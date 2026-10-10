@@ -30,7 +30,7 @@
 .EXAMPLE
   .\tools\test.ps1
 .EXAMPLE
-  .\tools\test.ps1 -Json "C:\Users\Yohan\Documents\Editing\nemzzz prince of the scene\prince of the scene .ae2ec.json" -Keep
+  .\tools\test.ps1 -Json "C:\path\to\project.ae2ec.json" -Keep
 #>
 [CmdletBinding()]
 param(

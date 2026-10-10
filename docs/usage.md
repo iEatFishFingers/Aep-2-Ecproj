@@ -6,8 +6,6 @@
 
 In After Effects, open **Edit ▸ Preferences ▸ Scripting & Expressions** and turn on **Allow Scripts to Write Files and Access Network**. The exporter checks this setting and tells you if it's off.
 
-You can also make the script appear in the **File ▸ Scripts** menu by copying `ae\AE2EC_Export.jsx` to `C:\Program Files\Adobe\Adobe After Effects <version>\Support Files\Scripts\`. That's optional.
-
 ### Running it
 
 1. Open the project and **save it**. The export records the project's location, and footage paths are absolute.
