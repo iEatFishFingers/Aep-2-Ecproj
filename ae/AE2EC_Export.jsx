@@ -21,7 +21,7 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
 (function (X) {
 
     X.EXPORTER_NAME = "AE2EC_Export.jsx";
-    X.EXPORTER_VERSION = "1.1.0";
+    X.EXPORTER_VERSION = "1.2.0";
     X.FORMAT = "ae2ec";
     X.FORMAT_VERSION = 1;
 
@@ -88,63 +88,54 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         while (hex.length < 4) { hex = "0" + hex; }
         return "\\u" + hex;
     }
+    // Keys and match names repeat thousands of times in an export: escape each one once.
+    var QUOTED = {};
     // one regex pass instead of a per-character loop (much faster in ExtendScript)
     function quote(s) {
-        return '"' + String(s).replace(ESCAPE_RE, escapeChar) + '"';
+        s = String(s);
+        var q = QUOTED["~" + s];     // "~": never one of Object's own property names
+        if (q === undefined) {
+            q = '"' + s.replace(ESCAPE_RE, escapeChar) + '"';
+            if (s.length <= 64) { QUOTED["~" + s] = q; }
+        }
+        return q;
     }
 
     function isArray(v) { return v instanceof Array; }
 
-    function stringifyInto(v, parts, indent, depth) {
-        var i, k, first, pad, padIn, keys;
-        if (v === null || v === undefined) { parts.push("null"); return; }
+    // Each array and object is joined on its own, so no list of pieces gets long. Writing the JSON
+    // as one list of every piece was the slow part of exporting in After Effects: a 1 MB export
+    // spent about 5 minutes there, against 2 s reading its 355 layers.
+    function stringifyValue(v, indent, depth) {
+        if (v === null || v === undefined) { return "null"; }
         var t = typeof v;
-        if (t === "number") { parts.push(isFinite(v) ? String(v) : "null"); return; }
-        if (t === "boolean") { parts.push(v ? "true" : "false"); return; }
-        if (t === "string") { parts.push(quote(v)); return; }
-        pad = indent ? "\n" + new Array(depth + 1).join(indent) : "";
-        padIn = indent ? "\n" + new Array(depth + 2).join(indent) : "";
+        if (t === "number") { return isFinite(v) ? String(v) : "null"; }
+        if (t === "boolean") { return v ? "true" : "false"; }
+        if (t === "string") { return quote(v); }
+        if (t !== "object") { return "null"; }
+        var pad = indent ? "\n" + new Array(depth + 1).join(indent) : "";
+        var padIn = indent ? "\n" + new Array(depth + 2).join(indent) : "";
+        var parts = [], i, k;
         if (isArray(v)) {
-            if (v.length === 0) { parts.push("[]"); return; }
+            if (v.length === 0) { return "[]"; }
             // short numeric arrays (vectors, colours) stay on one line
             var flat = true;
             for (i = 0; i < v.length; i++) { if (typeof v[i] === "object" && v[i] !== null) { flat = false; break; } }
-            parts.push("[");
-            for (i = 0; i < v.length; i++) {
-                if (i > 0) { parts.push(flat ? "," : ","); }
-                if (!flat) { parts.push(padIn); }
-                stringifyInto(v[i], parts, indent, depth + 1);
-            }
-            if (!flat) { parts.push(pad); }
-            parts.push("]");
-            return;
+            for (i = 0; i < v.length; i++) { parts.push((flat ? "" : padIn) + stringifyValue(v[i], indent, depth + 1)); }
+            return "[" + parts.join(",") + (flat ? "" : pad) + "]";
         }
-        if (t === "object") {
-            keys = [];
-            for (k in v) { if (v.hasOwnProperty(k) && v[k] !== undefined && typeof v[k] !== "function") { keys.push(k); } }
-            if (keys.length === 0) { parts.push("{}"); return; }
-            parts.push("{");
-            first = true;
-            for (i = 0; i < keys.length; i++) {
-                if (!first) { parts.push(","); }
-                first = false;
-                parts.push(padIn);
-                parts.push(quote(keys[i]));
-                parts.push(indent ? ": " : ":");
-                stringifyInto(v[keys[i]], parts, indent, depth + 1);
+        for (k in v) {
+            if (v.hasOwnProperty(k) && v[k] !== undefined && typeof v[k] !== "function") {
+                parts.push(padIn + quote(k) + (indent ? ": " : ":") + stringifyValue(v[k], indent, depth + 1));
             }
-            parts.push(pad);
-            parts.push("}");
-            return;
         }
-        parts.push("null");
+        if (parts.length === 0) { return "{}"; }
+        return "{" + parts.join(",") + pad + "}";
     }
 
     /** JSON.stringify replacement for ExtendScript. indent: "" for compact, e.g. " " for pretty. */
     X.stringify = function (v, indent) {
-        var parts = [];
-        stringifyInto(v, parts, indent || "", 0);
-        return parts.join("");
+        return stringifyValue(v, indent || "", 0);
     };
 
     // ------------------------------------------------------------------ helpers
@@ -317,7 +308,8 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
             ex = tryGet(function () { return p.expression; }, "") || "";
         }
 
-        // Fast path: an untouched property at its default is skipped without reading its value.
+        // Fast option (includeUnmodified: false): an untouched property is skipped without reading
+        // its value, and the importer leaves EffectCraft's own default there.
         if (nk === 0 && !ex && mod === false && !opts.includeUnmodified &&
                 vt !== "TEXT_DOCUMENT" && vt !== "SHAPE") {
             stats.skipped++;
@@ -342,7 +334,7 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
             hasData = true;
         } else if (vt === "CUSTOM_VALUE") {
             if (mod !== false) { node.custom = true; hasData = true; }   // e.g. Curves: unreadable by scripts
-        } else if (vt !== "NO_VALUE") {
+        } else if (vt !== "NO_VALUE" && vt !== "MARKER") {     // markers exist only as keyframes
             var ok = true, raw;
             // with an expression, .value is the expression's result: read the value underneath
             try { raw = ex ? p.valueAtTime(0, true) : p.value; } catch (eVal) { ok = false; }
@@ -653,13 +645,15 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
     /**
      * Describe the open project.
      * opts.selectedOnly      only the comps selected in the Project panel (+ dependencies)
-     * opts.includeUnmodified also write values still at their defaults (bigger file, safer)
+     * opts.includeUnmodified write every value, also those left at AE's defaults (default true), so
+     *                        the importer never relies on EffectCraft's defaults; false writes only
+     *                        what AE reports as modified (faster on very large projects)
      * opts.progress          function(compName, layerIndex, layerCount)
      * Returns { data, stats }.
      */
     X.exportProject = function (opts) {
         opts = opts || {};
-        if (opts.includeUnmodified === undefined) { opts.includeUnmodified = false; }
+        if (opts.includeUnmodified === undefined) { opts.includeUnmodified = true; }
         var proj = app.project;
         var stats = { comps: 0, layers: 0, footage: 0, props: 0, keys: 0, expressions: 0, skipped: 0 };
 
@@ -748,8 +742,10 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         var p = w.add("panel", undefined, "Options");
         p.alignChildren = ["left", "top"];
         var cbSel = p.add("checkbox", undefined, "Only comps selected in the Project panel (+ what they use)");
-        var cbAll = p.add("checkbox", undefined, "Also write values left at their defaults (slower, bigger file)");
-        cbAll.value = false;
+        var cbFast = p.add("checkbox", undefined, "Faster: only values you changed (EffectCraft fills in its own defaults)");
+        cbFast.value = false;
+        cbFast.helpTip = "For very large projects. Values you never touched aren't read, and EffectCraft uses its own " +
+            "defaults for them, which aren't always After Effects' (a new null's anchor point, for one).";
         var cbPretty = p.add("checkbox", undefined, "Readable JSON (indented)");
         cbPretty.value = true;
         var g = w.add("group");
@@ -757,7 +753,7 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         g.add("button", undefined, "Cancel", { name: "cancel" });
         g.add("button", undefined, "Export...", { name: "ok" });
         if (w.show() !== 1) { return null; }
-        return { selectedOnly: cbSel.value, includeUnmodified: cbAll.value, pretty: cbPretty.value };
+        return { selectedOnly: cbSel.value, includeUnmodified: !cbFast.value, pretty: cbPretty.value };
     }
 
     X.main = function () {
@@ -844,7 +840,7 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         alert("Exported to:\n" + target.fsName + "\n\n" +
             s.comps + " comps, " + s.layers + " layers, " + s.footage + " footage items\n" +
             s.props + " properties, " + s.keys + " keyframes, " + s.expressions + " expressions\n" +
-            "(" + s.skipped + " untouched properties skipped)\n" +
+            "(" + s.skipped + (opts.includeUnmodified ? " groups that don't apply" : " untouched properties and groups") + " skipped)\n" +
             (Math.round(text.length / 1024)) + " KB in " + secs + " s\n\n" +
             "Next: import it into EffectCraft (see README).");
     };

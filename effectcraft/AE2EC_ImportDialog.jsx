@@ -67,7 +67,6 @@ var AE2EC_DATA, AE2EC_OPTIONS, AE2EC_RELINK_FOLDER, AE2EC_SOURCE;
         opt.alignChildren = ["fill", "top"];
         var folder = opt.add("checkbox", undefined, "Put everything in a folder named after the project", { name: "rootFolder" });
         var open = opt.add("checkbox", undefined, "Open the project's active composition when done", { name: "openComp" });
-        var all = opt.add("checkbox", undefined, "Also set values After Effects left at their defaults (slower)", { name: "applyAll" });
         folder.value = true;
         open.value = true;
 
@@ -99,7 +98,7 @@ var AE2EC_DATA, AE2EC_OPTIONS, AE2EC_RELINK_FOLDER, AE2EC_SOURCE;
         };
         load(file);
         if (d.show() !== 1 || !data) { return null; }
-        return { file: file, data: data, options: { rootFolder: folder.value, openComp: open.value, applyAll: all.value } };
+        return { file: file, data: data, options: { rootFolder: folder.value, openComp: open.value } };
     }
 
     // ---------------------------------------------------------------- 2. the import, with its progress

@@ -19,7 +19,8 @@
   Import into the running app over the control port instead of writing a file.
 
 .PARAMETER ApplyAll
-  Also set values that After Effects reported as unmodified (slower, occasionally safer).
+  No longer needed, and ignored: the importer applies every value the export carries.
+  Kept so older commands still run.
 
 .PARAMETER PathMap
   Footage path remaps, "old prefix=>new prefix". Repeatable.
@@ -61,7 +62,6 @@ foreach ($m in $PathMap) {
     $maps += , @($parts[0].Trim(), $parts[1].Trim())
 }
 $opts = [ordered]@{
-    applyAll   = [bool]$ApplyAll
     rootFolder = -not $NoRootFolder
     pathMap    = $maps
     openComp   = $true

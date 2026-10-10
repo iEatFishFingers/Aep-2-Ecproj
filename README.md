@@ -59,7 +59,8 @@ You can also double-click `tools\import.bat` and drop the JSON file onto the win
 
 ## Status
 
-- **Round trip inside EffectCraft passes** with zero differences on the test fixture: 2 comps, 10 layers, 235 properties, keyframes with eases and spatial tangents, expressions, effects, masks, shapes, text, markers, a precomp, parenting, a track matte, a camera and a light.
+- **Round trip inside EffectCraft passes** with zero differences on the test fixture: 2 comps, 10 layers, 181 properties, keyframes with eases and spatial tangents, expressions, effects, masks, shapes, text, markers, a precomp, parenting, a track matte, a camera and a light. It also checks what an After Effects export needs on top: AE's defaults for older exports, and settings AE numbers or scales differently.
+- **Every value is exported** (exporter 1.2), not only the ones After Effects reports as modified, so the import doesn't depend on EffectCraft's defaults. Exports made before that still import right where AE's default is known to differ, such as a null's anchor point (see [what the importer sets](docs/usage.md#what-the-importer-sets)).
 - **A real project has been converted**: `nonmummy .aep` (Lily Allen visualiser, AE 2020) has 8 comps and 42 layers, and all footage, keyframes, masks, effects and expressions came across. The only remaining note was that EffectCraft 0.6.0 showed the animated GIF as a still (0.7.0 plays GIFs). See [docs/testing.md](docs/testing.md).
 - See [docs/coverage.md](docs/coverage.md) for known gaps. The main ones are third-party plug-ins, effect data scripts can't read (such as Curves), per-character text styling, and GIFs, which EffectCraft 0.6.0 imports as stills (0.7.0 plays them).
 

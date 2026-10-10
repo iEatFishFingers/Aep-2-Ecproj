@@ -19,10 +19,11 @@
 
 var AE2EC_IMPORT = (function () {
 
-    var VERSION = "1.2.0";
+    var VERSION = "1.3.0";
 
+    // Every value the export carries is applied (it's After Effects' own), so importer 1.2's
+    // applyAll option is no longer needed; old option files that still set it are fine.
     var DEFAULTS = {
-        applyAll: false,         // also set properties AE reported as unmodified
         rootFolder: true,        // put everything in a folder named after the AE project
         pathMap: [],             // [["D:/old/footage", "E:/new/footage"], ...] prefix replacements
         openComp: true,          // open the AE project's active comp when done
@@ -125,8 +126,18 @@ var AE2EC_IMPORT = (function () {
     var KNOWN_RANGES = {
         "CC Jaws-0001": [0, 1],
         "ADBE Drop Shadow-0002": [0, 255],
-        "ADBE Radial Shadow-0002": [0, 255]
+        "ADBE Radial Shadow-0002": [0, 255],
+        "ADBE Fill-0005": [0, 1]          // Fill's Opacity: an untouched one is 1 in AE
     };
+
+    // Settings After Effects counts from 0 where EffectCraft's scripting counts its menu from 1:
+    // Casts / Accepts Shadows (0, 1, 2 = Off, On, Only) and a text layer's Path (0 = None, then
+    // the masks). Exports made in EffectCraft already count from 1.
+    var FROM_ZERO = { "ADBE Casts Shadows": 1, "ADBE Accepts Shadows": 1, "ADBE Text Path": 1 };
+
+    // Where the export comes from (set by run): made in After Effects (not in EffectCraft, as
+    // the round-trip test's are), and whether its exporter recorded ranges (1.1 and newer)
+    var SRC = { fromAE: true, ranges: true };
     var SCALE_RULES = [[1, 100], [255, 100], [100, 1], [100, 255], [1, 255], [255, 1]];
     function rangeFactor(node, prop) {
         if (node.vt !== "OneD") { return 1; }
@@ -142,6 +153,13 @@ var AE2EC_IMPORT = (function () {
             }
         }
         return 1;
+    }
+
+    // An exported number as EffectCraft takes it (f: rangeFactor)
+    function ecNumber(node, f, v) {
+        if (typeof v !== "number") { return v; }
+        if (SRC.fromAE && FROM_ZERO[node.mn]) { return v + 1; }
+        return f !== 1 ? v * f : v;
     }
 
     function deValue(vt, v, prop) {
@@ -169,7 +187,7 @@ var AE2EC_IMPORT = (function () {
         for (i = 0; i < node.k.length; i++) {
             k = node.k[i];
             try {
-                prop.setValueAtTime(k.t, (f !== 1 && typeof k.v === "number") ? k.v * f : deValue(node.vt, k.v, prop));
+                prop.setValueAtTime(k.t, deValue(node.vt, ecNumber(node, f, k.v), prop));
                 R.counts.keys++;
             } catch (e1) { bump(R.failedValues, node.mn + " (keyframe)"); }
         }
@@ -199,10 +217,53 @@ var AE2EC_IMPORT = (function () {
     }
 
     // ------------------------------------------------------------------ property tree
-    function wantValue(node, opts) {
-        if (node.v === undefined) { return false; }
-        if (opts.applyAll || node.mod === undefined || node.mod === true) { return true; }
-        return node.vt === "TEXT_DOCUMENT" || node.vt === "SHAPE";
+    // EffectCraft refuses to set these by script. At After Effects' default (unmodified) they're
+    // left alone, so they don't fill the report.
+    var KNOWN_UNSETTABLE = { "perChar3d": 1, "ADBE Vector Blend Mode": 1, "ADBE Vector Shape Direction": 1 };
+
+    // After Effects' defaults where EffectCraft's differ. Exports from exporter 1.1 and older, or
+    // made with its "Faster" option, have no value for a property AE reports as unmodified, which
+    // would leave EffectCraft's default there. Used only when the export has no value.
+    var AE_DEFAULTS = [
+        // AE puts a new null's anchor at its top-left corner; EffectCraft 0.7 centres it, which
+        // moves everything parented to the null 50 px up and left
+        { layer: "null", path: ["ADBE Transform Group", "ADBE Anchor Point"], v: [0, 0, 0],
+            what: "Null layers got After Effects' default Anchor Point [0, 0, 0]" }
+    ];
+
+    function plain(v) { return typeof v === "boolean" ? (v ? 1 : 0) : v; }
+
+    // Numbers, vectors and colours, to a small tolerance. EffectCraft may hold 3 values where
+    // After Effects wrote 2 (a 2D layer's position), so the common part is compared.
+    function sameValue(a, b) {
+        a = plain(a); b = plain(b);
+        if (typeof a === "number" && typeof b === "number") { return Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b)); }
+        if (a instanceof Array && b instanceof Array) {
+            for (var i = 0; i < Math.min(a.length, b.length); i++) { if (!sameValue(a[i], b[i])) { return false; } }
+            return true;
+        }
+        return a === b;
+    }
+
+    // Whether to set `v` (already rescaled): not when EffectCraft has it already (reading is much
+    // cheaper than setting, and the undo step stays small). Text documents and shape paths are
+    // always set; comparing them would cost about as much.
+    function needsValue(prop, node, v) {
+        if (node.vt === "TEXT_DOCUMENT" || node.vt === "SHAPE") { return true; }
+        if (node.mod === false && KNOWN_UNSETTABLE[node.mn]) { return false; }
+        // exporter 1.0 didn't record ranges, so an untouched setting on AE's 0..1 or 0..255 scale
+        // can't be told apart: left at EffectCraft's default, as importer 1.2 did
+        if (node.mod === false && node.vt === "OneD" && SRC.fromAE && !SRC.ranges && !KNOWN_RANGES[node.mn]) { return false; }
+        var cur;
+        try { cur = prop.value; } catch (e) { return true; }
+        return !sameValue(cur, v);
+    }
+
+    function setValue(prop, node, v) {
+        if (prop.numKeys > 0) { while (prop.numKeys > 0) { prop.removeKey(prop.numKeys); } }
+        if (!needsValue(prop, node, v)) { return; }
+        prop.setValue(deValue(node.vt, v, prop));
+        R.counts.props++;
     }
 
     function applyLeaf(prop, node, opts, ctx) {
@@ -215,12 +276,11 @@ var AE2EC_IMPORT = (function () {
         if (node.k && node.k.length) {
             applyKeys(prop, node);
             R.counts.props++;
-        } else if (wantValue(node, opts)) {
+        } else if (node.v !== undefined && node.vt !== "MARKER") {
+            // After Effects' value, whether or not AE reports it as modified (markers exist only
+            // as keyframes: exporter 1.0 also wrote an empty marker property's value)
             try {
-                if (prop.numKeys > 0) { while (prop.numKeys > 0) { prop.removeKey(prop.numKeys); } }
-                var fv = rangeFactor(node, prop);
-                prop.setValue((fv !== 1 && typeof node.v === "number") ? node.v * fv : deValue(node.vt, node.v, prop));
-                R.counts.props++;
+                setValue(prop, node, ecNumber(node, rangeFactor(node, prop), node.v));
             } catch (e1) { bump(R.failedValues, node.mn); }
         }
         if (node.x !== undefined) {
@@ -474,6 +534,26 @@ var AE2EC_IMPORT = (function () {
         return null;
     }
 
+    // AE_DEFAULTS for the properties this layer's export has no value for
+    var defaultsUsed = {};
+    function applyAeDefaults(lay, L) {
+        var i, j, d, node, prop;
+        for (i = 0; i < AE_DEFAULTS.length; i++) {
+            d = AE_DEFAULTS[i];
+            if (d.layer !== L.type) { continue; }
+            node = { ch: L.props };
+            prop = lay;
+            for (j = 0; j < d.path.length; j++) {
+                node = node ? findNode(node.ch, d.path[j]) : null;
+                try { prop = prop ? prop.property(d.path[j]) : null; } catch (e) { prop = null; }
+            }
+            if (!prop || (node && (node.v !== undefined || (node.k && node.k.length)))) { continue; }
+            try {
+                if (needsValue(prop, {}, d.v)) { prop.setValue(d.v); bump(defaultsUsed, d.what); }
+            } catch (e2) { bump(R.failedValues, d.path[d.path.length - 1]); }
+        }
+    }
+
     function textDocOf(L) {
         var t = findNode(L.props, "ADBE Text Properties");
         var d = t ? findNode(t.ch, "ADBE Text Document") : null;
@@ -587,6 +667,7 @@ var AE2EC_IMPORT = (function () {
                 if (!p) { if (anyModified(n)) { bump(R.unsupported, n.mn); } continue; }
                 try { applyNode(p, n, opts, ctx); } catch (e3) { note(ctx.path + ": " + e3); }
             }
+            applyAeDefaults(lay, L);
         }
         for (i = 0; i < Ls.length; i++) {        // mattes, then switches that depend on them
             L = Ls[i]; lay = layers[L.index];
@@ -624,6 +705,9 @@ var AE2EC_IMPORT = (function () {
         var data = load(), k;
         if (data.format !== "ae2ec") { throw new Error("Not an ae2ec export (format = " + data.format + ")"); }
         if (data.formatVersion > 1) { note("File is format version " + data.formatVersion + "; this importer knows version 1"); }
+        SRC.fromAE = !/EffectCraft/.test(String(data.host && data.host.app));
+        var ver = /(\d+)\.(\d+)\.\d+$/.exec(String(data.exporter || ""));
+        SRC.ranges = !ver || Number(ver[1]) > 1 || Number(ver[2]) >= 1;
         var opts = {}, user = (typeof AE2EC_OPTIONS !== "undefined" && AE2EC_OPTIONS) ? AE2EC_OPTIONS : {};
         for (k in DEFAULTS) { opts[k] = DEFAULTS[k]; }
         for (k in user) { if (user.hasOwnProperty(k)) { opts[k] = user[k]; } }
@@ -680,6 +764,11 @@ var AE2EC_IMPORT = (function () {
             }
         }
         app.endUndoGroup();
+        for (k in defaultsUsed) {
+            if (defaultsUsed.hasOwnProperty(k)) {
+                note(k + " (" + defaultsUsed[k] + "x), which the export doesn't record (exporter 1.2 and newer write every value).");
+            }
+        }
 
         if (opts.openComp && data.project && data.project.activeItemId && itemMap[data.project.activeItemId]) {
             try { itemMap[data.project.activeItemId].openInViewer(); } catch (e4) { }

@@ -5,6 +5,8 @@
  * 2. exports it with ae/AE2EC_Export.jsx (core functions only, no dialog)
  * 3. imports that into a fresh project with effectcraft/AE2EC_Import.jsx
  * 4. exports again and compares the two exports
+ * 5. imports the export without the null's Anchor Point (as exporter 1.1 and older wrote it) and
+ *    checks the null gets After Effects' default
  *
  * EffectCraft scripts cannot include other files, so this runs as part of a
  * combined script built by tools/build-script.ps1 -Test (see docs/testing.md).
@@ -186,8 +188,7 @@
     // import into an empty project
     app.newProject();
     AE2EC_DATA = first;
-    // EffectCraft's isModified is not reliable yet, so apply every value in the test
-    AE2EC_OPTIONS = { rootFolder: false, applyAll: true };
+    AE2EC_OPTIONS = { rootFolder: false };
     var reportText = AE2EC_RUN_IMPORTER();
     out.report = JSON.parse(reportText);
 
@@ -206,6 +207,77 @@
     for (fk in out.report.failedValues) {
         if (out.report.failedValues.hasOwnProperty(fk) && !KNOWN_FAILURES[fk]) { out.unexpectedFailures[fk] = out.report.failedValues[fk]; nUnexpected++; }
     }
+
+    // An older export has no value for a null's untouched Anchor Point (exporter 1.1 and older
+    // wrote only modified values): the null must get After Effects' default [0, 0, 0], not
+    // EffectCraft's own.
+    var old = JSON.parse(JSON.stringify(first)), i, j, L, tr;
+    for (i = 0; i < old.items.length; i++) {
+        for (j = 0; old.items[i].layers && j < old.items[i].layers.length; j++) {
+            L = old.items[i].layers[j];
+            tr = null;
+            for (var p = 0; p < L.props.length; p++) { if (L.props[p].mn === "ADBE Transform Group") { tr = L.props[p]; } }
+            if (L.type !== "null" || !tr) { continue; }
+            var kept = [];
+            for (var c = 0; c < tr.ch.length; c++) { if (tr.ch[c].mn !== "ADBE Anchor Point") { kept.push(tr.ch[c]); } }
+            tr.ch = kept;
+        }
+    }
+    app.newProject();
+    AE2EC_DATA = old;
+    AE2EC_OPTIONS = { rootFolder: false };
+    AE2EC_RUN_IMPORTER();
+    var anchor = null;
+    for (i = 1; i <= app.project.numItems; i++) {
+        var it2 = app.project.item(i);
+        if (it2 instanceof CompItem && it2.name === "Main") {
+            anchor = it2.layer("Controller").property("ADBE Transform Group").property("ADBE Anchor Point").value;
+        }
+    }
+    out.oldExportNullAnchor = anchor;
+    var anchorOk = anchor !== null && Math.abs(anchor[0]) < 1e-9 && Math.abs(anchor[1]) < 1e-9;
+    if (!anchorOk) { out.differences.push("old export: null Controller's Anchor Point is " + JSON.stringify(anchor) + ", not After Effects' default [0, 0, 0]"); }
+
+    // An export made in After Effects (exporter 1.0, so no ranges): AE counts Casts / Accepts
+    // Shadows and a text layer's Path from 0 where EffectCraft counts from 1, stores Fill's
+    // Opacity as 0..1, and an untouched setting with no known range is left alone.
+    function leaf(mn, n, vt, mod, v) { return { mn: mn, n: n, pt: "P", vt: vt, mod: mod, v: v }; }
+    var square = { closed: true, vertices: [[0, 0], [100, 0], [100, 100], [0, 100]],
+        inTangents: [[0, 0], [0, 0], [0, 0], [0, 0]], outTangents: [[0, 0], [0, 0], [0, 0], [0, 0]] };
+    app.newProject();
+    AE2EC_DATA = { format: "ae2ec", formatVersion: 1, exporter: "AE2EC_Export.jsx 1.0.0", host: { app: "17.1.3x40" },
+        project: { name: "from AE" },
+        items: [{ id: 1, type: "comp", name: "From AE", width: 640, height: 360, pixelAspect: 1, frameRate: 25, duration: 2, layers: [
+            { index: 1, name: "On a path", type: "text", attrs: { threeDLayer: true }, props: [
+                { mn: "ADBE Text Properties", n: "Text", pt: "N", ch: [{ mn: "ADBE Text Path Options", n: "Path Options", pt: "N", ch: [
+                    leaf("ADBE Text Path", "Path", "MASK_INDEX", true, 1)] }] },
+                { mn: "ADBE Mask Parade", n: "Masks", pt: "I", ch: [{ mn: "ADBE Mask Atom", n: "Mask 1", pt: "N", i: 1, ch: [
+                    leaf("ADBE Mask Shape", "Mask Path", "SHAPE", true, square)] }] },
+                { mn: "ADBE Material Options Group", n: "Material Options", pt: "N", ch: [
+                    leaf("ADBE Casts Shadows", "Casts Shadows", "OneD", true, 1), leaf("ADBE Accepts Shadows", "Accepts Shadows", "OneD", true, 0)] }] },
+            { index: 2, name: "Filled", type: "solid", solid: { name: "Filled", width: 640, height: 360, pixelAspect: 1, color: [0, 0, 0] }, attrs: {}, props: [
+                { mn: "ADBE Effect Parade", n: "Effects", pt: "I", ch: [{ mn: "ADBE Fill", n: "Fill", pt: "N", i: 1, ch: [
+                    leaf("ADBE Fill-0005", "Opacity", "OneD", true, 0.5),
+                    leaf("ADBE Fill-0003", "Horizontal Feather", "OneD", false, 7)] }] }] }] }] };   // 7: made up, to see it's left alone
+    AE2EC_OPTIONS = { rootFolder: false };
+    var fromAE = JSON.parse(AE2EC_RUN_IMPORTER()), got = {};
+    for (i = 1; i <= app.project.numItems; i++) {
+        var it3 = app.project.item(i);
+        if (!(it3 instanceof CompItem) || it3.name !== "From AE") { continue; }
+        var txt = it3.layer("On a path"), fill = it3.layer("Filled").property("ADBE Effect Parade").property(1);
+        got.textPath = txt.property("ADBE Text Properties").property("ADBE Text Path Options").property("Path").value;
+        got.casts = txt.property("ADBE Material Options Group").property("ADBE Casts Shadows").value;
+        got.accepts = txt.property("ADBE Material Options Group").property("ADBE Accepts Shadows").value;
+        got.fillOpacity = fill.property("ADBE Fill-0005").value;
+        got.fillFeather = fill.property("ADBE Fill-0003").value;
+    }
+    var want = { textPath: 2, casts: 2, accepts: 1, fillOpacity: 50, fillFeather: 0 };
+    out.fromAE = got;
+    for (var wk in want) {
+        if (want.hasOwnProperty(wk) && got[wk] !== want[wk]) { out.differences.push("export from After Effects: " + wk + " is " + got[wk] + ", expected " + want[wk]); }
+    }
+    if (!fromAE.ok) { out.differences.push("export from After Effects: import failed: " + (fromAE.error || JSON.stringify(fromAE.failedValues))); }
+
     out.ok = out.report.ok && out.differences.length === 0 && nUnexpected === 0;
     return JSON.stringify(out, null, 1);
 })();

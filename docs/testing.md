@@ -8,6 +8,8 @@ EffectCraft implements After Effects' scripting model, so the exporter can run *
 2. The fixture is exported with `AE2EC.exportProject()` from the real exporter.
 3. A fresh project is created and the export is imported with the real importer.
 4. The new project is exported again and compared with the first export, item by item. IDs, timestamps and `isModified` flags are ignored.
+5. The export is imported again without the null's Anchor Point, as exporter 1.1 and older wrote it, and the null must get After Effects' default [0, 0, 0].
+6. A small export written as After Effects would (exporter 1.0, no ranges) is imported: Casts and Accepts Shadows and a text layer's Path must be counted from 1, Fill's Opacity rescaled from 0..1, and an untouched setting with no known scale left alone.
 
 The test passes when the importer reports `ok`, there are zero differences, and no unexpected value failures occur. It allows for the known EffectCraft quirks listed in [coverage.md](coverage.md).
 
@@ -26,13 +28,19 @@ Through Claude's MCP connection, the test is run with `execute_command file.runS
 
 Add `-ReturnFixture` to `build-script.ps1` to include the first export in the result. That's how `tests/fixtures/effectcraft-fixture.ae2ec.json` was made.
 
-### Result on 9 October 2026 (EffectCraft 0.6.0)
+### Result on 10 October 2026 (EffectCraft 0.7.0, exporter 1.2.0, importer 1.3.0)
 
 ```
-ok: true, differences: [], unexpectedFailures: {}
-exported: 2 comps, 10 layers, 3 footage, 235 properties, 9 keyframes, 2 expressions
-imported: 2 comps, 10 layers, 3 effects, 1 mask, 228 properties set, 9 keyframes, 2 expressions
+ok: true, differences: [], unexpectedFailures: {}, failedValues: {}
+exported: 2 comps, 10 layers, 3 footage, 181 properties, 9 keyframes, 2 expressions
+imported: 2 comps, 10 layers, 3 effects, 1 mask, 16 values set (the other values already matched), 9 keyframes, 2 expressions
+old export: the null's Anchor Point came in as [0, 0, 0]
+from After Effects: Path 2, Casts Shadows 2, Accepts Shadows 1, Fill Opacity 50, Horizontal Feather 0 (as expected)
 ```
+
+`tools\test.ps1` on the same fixture: imported, and Verify checked 181 properties with no differences.
+
+On 9 October 2026 (EffectCraft 0.6.0) the fixture exported 235 properties and the importer set 228 of them, with `ADBE Vector Blend Mode`, `ADBE Vector Shape Direction` and `perChar3d` failing as known quirks.
 
 ## Testing the import dialog (no build needed)
 
@@ -73,8 +81,10 @@ note: kOnzy.gif is animated in AE but EffectCraft imports it as a still
 ```
 
 Two problems showed up in the first attempt:
-- The first exporter version read every hidden property (about 5,500), which made After Effects freeze for a long time. It now reads only modified ones (75).
+- The first exporter version read every hidden property (about 5,500), which made After Effects freeze for a long time. Later versions read only modified ones by default (75). The BMF export below suggests the freeze was mostly writing the JSON, not reading; exporter 1.2 reads every value again and writes the JSON in small pieces.
 - Every footage item became a placeholder because of the `File.exists` restriction.
+
+Re-imported on 10 October 2026 with importer 1.3.0 (this export has every value, `mod` included): Verify found no value differences. With importer 1.2.0 it found 6 when checking every value, among them two nulls at [50, 50, 0] instead of AE's [0, 0, 0].
 
 Before the import, the footage types in that folder (MP3, PNG, WebP, GIF) were checked to import in EffectCraft 0.6.0. The GIF came in as a still.
 
@@ -104,3 +114,13 @@ verify: 101 layers, 345 properties, 95 keyframes checked; remaining differences:
         2 image sequences whose files on disk differ from what AE imported (t_ has gaps,
         f_[0001-0151] has 180 files now)
 ```
+
+Re-imported on 10 October 2026 with importer 1.3.0: the same Verify result as importer 1.2.0 (one sequence length). Four nulls got After Effects' default Anchor Point, which this export (made with only modified values) doesn't record.
+
+### Real project: BMF (10 October 2026)
+
+The source was `bmf.aep` (AE 2020), exported with exporter 1.1.0 (only modified values): 34 comps, 355 layers, 90 of them nulls. In comp `scene 1`, Camera 2 is parented to a chain of 12 untouched nulls. EffectCraft gave each of them its own default anchor, [50, 50, 0], so each moved its children 50 px up and left, and the camera filmed empty space: at 0 s it sat at x 357, y −57 instead of the comp's centre, and the comp rendered black.
+
+Importer 1.3.0 gives the 88 untouched nulls After Effects' default anchor, [0, 0, 0]. The two nulls centred in AE with a tool are exported as modified [50, 50, 0] and keep it. Camera 2 now sits at x 957, y 543 at 0 s, and the comp shows the push-in on "SWEET ONE". Verify gives the same result as before, except that "keyframe ease" differences dropped from 48 to 4, because ease on a Linear side is no longer compared.
+
+The export's log shows where After Effects spent its time: 2 s reading the 355 layers, then 286 s writing 1 MB of JSON. See [How long it takes](usage.md#how-long-it-takes).

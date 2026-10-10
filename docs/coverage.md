@@ -37,6 +37,7 @@
 
 | Feature | Status | Notes |
 |---|---|---|
+| Values left at After Effects' defaults | ✅ | Exporter 1.2 writes every value and the importer applies it, so nothing depends on EffectCraft's defaults. For older exports (or **Faster**), the importer uses AE's default where it's known to differ: a null's Anchor Point [0, 0, 0]. See [What the importer sets](usage.md#what-the-importer-sets). |
 | Transform (incl. 3D orientation/rotation) | ✅ | |
 | Separated dimensions (X/Y/Z Position) | ☑️ | |
 | Keyframes: linear, bezier, hold | ✅ | |
@@ -46,7 +47,9 @@
 | Keyframe label colours | ⚠️ | EffectCraft (0.6.0 and 0.7.0) accepts the call but ignores it. |
 | Expressions (text and enabled state) | ✅ | Copied word for word, and the pre-expression value is kept underneath. |
 | Effects (all built-in AE effects, plus CC effects) | ✅ | Added by match name, falling back to the effect's AE display name and then its layer name (so e.g. `ADBE Noise2` finds EffectCraft's Noise). They're renamed and switched on or off. Parameters are matched by match name, name, then parameter number. |
-| Effect settings stored on different scales | ✅ | The importer rescales a value when AE's range differs from EffectCraft's in a known way (0..1, 0..100, 0..255). Examples are CC Jaws Completion and Drop Shadow Opacity. Exports from exporter 1.1+ carry AE's range for every setting, so new cases are handled automatically. |
+| Effect settings stored on different scales | ✅ | The importer rescales a value when AE's range differs from EffectCraft's in a known way (0..1, 0..100, 0..255). Examples are CC Jaws Completion, Drop Shadow Opacity and Fill Opacity. Exports from exporter 1.1+ carry AE's range for every setting, so new cases are handled automatically. Exporter 1.0 exports don't, so their untouched one-number settings are left at EffectCraft's defaults unless the scale is known. |
+| Material Options: Casts Shadows, Accepts Shadows | ✅ | AE counts Off, On, Only from 0; EffectCraft's scripting from 1. The importer adds 1. |
+| Text on a path (Path Options ▸ Path) | ✅ | AE counts None, then each mask, from 0; EffectCraft's scripting from 1. The importer adds 1. |
 | Effect controls (Slider, Point…) used by expressions | ✅ | |
 | Effects with custom data (Curves, Levels histogram, some keyers) | ❌ | Scripts can't read that data. The effect is added with defaults and listed under `customValues`. |
 | Third-party effects (Trapcode, Element, Saber, Deep Glow…) | ❌ | EffectCraft can't run AE plug-ins. They're listed under `missingEffects`. |
@@ -64,8 +67,10 @@
 
 These were found on EffectCraft 0.6.0 and rechecked on 0.7.0 (10 October 2026). They all still apply unless the item says otherwise.
 
-- `isModified` always returns `false`. This only matters if you export *from* EffectCraft, as the test does, which is why the test uses `applyAll`.
-- Some shape defaults can't be set by script: `ADBE Vector Blend Mode` and `ADBE Vector Shape Direction`. `threeDPerChar` can't be set either. AE marks these as unmodified, so a normal import doesn't touch them.
+- `isModified` always returns `false`. This only matters if you export *from* EffectCraft, as the test does. The importer applies every value whatever `mod` says, so it doesn't depend on it.
+- Some shape defaults can't be set by script: `ADBE Vector Blend Mode` and `ADBE Vector Shape Direction`. Per-character 3D (`perChar3d`) can't be set either. When AE has them at its default, the importer leaves them alone.
+- A new null's anchor point is at its centre ([50, 50, 0]); in After Effects it's at the top-left corner ([0, 0, 0]). Everything parented to an untouched null then sits 50 px up and left of where AE puts it, so a camera under a chain of 12 nulls (the BMF project) filmed empty space. The importer sets AE's anchor (from the export, or AE's default for older exports). The EffectCraft fork's `fix/new-nulls-anchor-at-top-left` branch makes new nulls match AE.
+- Casts Shadows, Accepts Shadows and a text layer's Path are menus EffectCraft's scripting counts from 1, where AE counts from 0 (`setValue(0)` and `setValue(1)` both give Off).
 - On 0.6.0, a spatial keyframe's temporal ease could come back with 3 entries instead of 1. The values were the same. 0.7.0 returns 1 entry.
 - Scripts can't include other files (`$.evalFile` throws), and can only read files in the project's folder unless **Allow Scripts to Write Files and Access Network** is on. That's why `build-script.ps1` exists.
 - `SolidSource`, `FileSource` and `PlaceholderSource` don't exist as classes, so the exporter falls back to checking the source's properties.

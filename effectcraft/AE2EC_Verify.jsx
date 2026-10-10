@@ -6,8 +6,8 @@
  * footage frame rates and durations, comp settings, every layer's timing, switches, parent and
  * matte, and every property AE recorded (values, keyframes, eases, expressions).
  *
- * Only what After Effects wrote is checked, so properties left at their defaults in AE are not
- * reported. Built by:  tools\build-script.ps1 -Verify -Json <export.ae2ec.json>
+ * Only what After Effects wrote is checked: every value from exporter 1.2 on, only the ones AE
+ * reports as modified from older exports. Built by:  tools\build-script.ps1 -Verify -Json <export.ae2ec.json>
  * (globals: AE2EC_SOURCE = the export, AE2EC = the exporter; prints AE2EC_VERIFY_BEGIN/END).
  */
 
@@ -22,6 +22,8 @@ var AE2EC_VERIFY = (function () {
     }
 
     function near(a, b) {
+        if (typeof a === "boolean") { a = a ? 1 : 0; }    // a checkbox is 0/1 in one app, false/true in the other
+        if (typeof b === "boolean") { b = b ? 1 : 0; }
         if (typeof a === "number" && typeof b === "number") { return Math.abs(a - b) <= 1e-3 * Math.max(1, Math.abs(a)); }
         if (a instanceof Array && b instanceof Array) {
             if (a.length !== b.length) {
@@ -86,7 +88,8 @@ var AE2EC_VERIFY = (function () {
         return null;
     }
 
-    var KNOWN_RANGES = { "CC Jaws-0001": [0, 1], "ADBE Drop Shadow-0002": [0, 255], "ADBE Radial Shadow-0002": [0, 255] };
+    var KNOWN_RANGES = { "CC Jaws-0001": [0, 1], "ADBE Drop Shadow-0002": [0, 255], "ADBE Radial Shadow-0002": [0, 255],
+        "ADBE Fill-0005": [0, 1] };
     var SCALE_RULES = [[1, 100], [255, 100], [100, 1], [100, 255], [1, 255], [255, 1]];
     function factor(s, d) {
         var a = s.rng || KNOWN_RANGES[s.mn], b = d.rng;
@@ -96,10 +99,42 @@ var AE2EC_VERIFY = (function () {
         }
         return 1;
     }
-    function scaled(v, f) { return (f !== 1 && typeof v === "number") ? v * f : v; }
+    // As AE2EC_Import.jsx: settings AE counts from 0 and EffectCraft from 1, whether the export
+    // was made in After Effects, and whether its exporter recorded ranges (1.1 and newer)
+    var FROM_ZERO = { "ADBE Casts Shadows": 1, "ADBE Accepts Shadows": 1, "ADBE Text Path": 1 };
+    var fromAE = !/EffectCraft/.test(String(src.host && src.host.app));
+    var ver = /(\d+)\.(\d+)\.\d+$/.exec(String(src.exporter || ""));
+    var ranges = !ver || Number(ver[1]) > 1 || Number(ver[2]) >= 1;
+
+    // the AE value `v` of `s` as EffectCraft should hold it (f: factor)
+    function expected(s, v, f) {
+        if (typeof v !== "number") { return v; }
+        if (fromAE && FROM_ZERO[s.mn]) { return v + 1; }
+        return f !== 1 ? v * f : v;
+    }
+
+    // EffectCraft refuses to set these by script
+    var KNOWN_UNSETTABLE = { "perChar3d": 1, "ADBE Vector Blend Mode": 1, "ADBE Vector Shape Direction": 1 };
+
+    // values the importer leaves at EffectCraft's default when AE has them at AE's
+    function leftAlone(s) {
+        if (s.mod !== false) { return false; }
+        return !!KNOWN_UNSETTABLE[s.mn] || (s.vt === "OneD" && fromAE && !ranges && !KNOWN_RANGES[s.mn]);
+    }
+
+    // a key's ease matters only on a Bezier side (Linear and Hold sides ignore it)
+    function easeDiffers(a, b, side) {
+        var interp = side === "ie" ? a.ii : a.oi;
+        if (interp !== "BEZIER" || !a[side] || !b[side]) { return false; }
+        return !near(a[side][0], b[side][0]);
+    }
+
+    var curLayer = null;    // the AE layer being compared
 
     function cmpNode(s, d, where) {
         if (s.pt === "P") {
+            // the importer leaves Time Remap alone on layers that don't use it
+            if (s.mn === "ADBE Time Remapping" && !(curLayer.attrs || {}).timeRemapEnabled) { return; }
             V.checked.props++;
             if (s.sep) { if (!d.sep) { diff("separate dimensions", where, true, false); } return; }
             if (s.k && s.k.length) {
@@ -109,16 +144,17 @@ var AE2EC_VERIFY = (function () {
                     var a = s.k[i], b = d.k[i], w = where + " key " + (i + 1);
                     V.checked.keys++;
                     if (!near(a.t, b.t)) { diff("keyframe time", w, a.t, b.t); }
-                    if (!valueEq(s.vt, scaled(a.v, fk), b.v)) { diff("keyframe value", w, scaled(a.v, fk), b.v); }
+                    if (!valueEq(s.vt, expected(s, a.v, fk), b.v)) { diff("keyframe value", w, expected(s, a.v, fk), b.v); }
                     if (a.ii !== b.ii || a.oi !== b.oi) { diff("keyframe interpolation", w, [a.ii, a.oi], [b.ii, b.oi]); }
-                    if (a.ie && b.ie && a.oi !== "HOLD" && a.ii !== "HOLD" && !(near(a.ie[0], b.ie[0]) && near(a.oe[0], b.oe[0]))) {
-                        diff("keyframe ease", w, [a.ie[0], a.oe[0]], [b.ie[0], b.oe[0]]);
+                    if (easeDiffers(a, b, "ie") || easeDiffers(a, b, "oe")) {
+                        diff("keyframe ease", w, [a.ie && a.ie[0], a.oe && a.oe[0]], [b.ie && b.ie[0], b.oe && b.oe[0]]);
                     }
                 }
-            } else if (s.v !== undefined && s.mod !== false) {
+            } else if (s.v !== undefined && s.vt !== "MARKER" && !leftAlone(s)) {     // markers are keyframes only
+                var want = expected(s, s.v, factor(s, d));
                 if (d.k && d.k.length) { diff("unexpected keyframes", where, s.v, "keyframed"); }
                 else if (d.v === undefined) { diff("value missing", where, s.v, null); }
-                else if (!valueEq(s.vt, scaled(s.v, factor(s, d)), d.v)) { diff("value", where, scaled(s.v, factor(s, d)), d.v); }
+                else if (!valueEq(s.vt, want, d.v)) { diff("value", where, want, d.v); }
             }
             if (s.x !== undefined) {
                 var sx = String(s.x).replace(/\r\n?/g, "\n"), dx = d.x === undefined ? null : String(d.x).replace(/\r\n?/g, "\n");
@@ -151,6 +187,7 @@ var AE2EC_VERIFY = (function () {
 
     function cmpLayer(s, d, where) {
         V.checked.layers++;
+        curLayer = s;
         if (s.name !== d.name) { diff("layer name", where, s.name, d.name); }
         if (s.type !== d.type) { diff("layer type", where, s.type, d.type); }
         for (var i = 0; i < LAYER_KEYS.length; i++) {

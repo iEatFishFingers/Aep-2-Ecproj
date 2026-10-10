@@ -8,10 +8,10 @@ The format is a single UTF-8 JSON file, conventionally named `<project>.ae2ec.js
 {
   "format": "ae2ec",
   "formatVersion": 1,
-  "exporter": "AE2EC_Export.jsx 1.0.0",
+  "exporter": "AE2EC_Export.jsx 1.2.0",
   "exportedAt": "…",
   "host": { "app": "25.0x…", "build": "…" },          // app.version / buildName
-  "options": { "selectedOnly": false, "includeUnmodified": true },
+  "options": { "selectedOnly": false, "includeUnmodified": true },   // false: the "Faster" option
   "project": { "file": "C:\\…\\nonmummy .aep", "name": "nonmummy .aep", "bitsPerChannel": 8,
                "workingSpace": "", "linearBlending": false, "expressionEngine": "javascript-1.0",
                "activeItemId": 12 },
@@ -103,7 +103,7 @@ The property tree is a direct mirror of AE's `PropertyGroup` / `Property` object
   "mod": true,                // isModified
   "rng": [0, 1],              // OneD only (exporter 1.1+): AE's [min, max] for the property; tells the
                               //      importer which scale AE stores it on (0..1, 0..100, 0..255)
-  "v": [960, 540],            // static value (pre-expression); absent when keyframed
+  "v": [960, 540],            // static value (pre-expression); absent when keyframed, and for markers
   "k": [ key, … ],            // keyframes
   "x": "wiggle(2,20)",        // expression text
   "xe": true,                 // expression enabled
@@ -134,10 +134,16 @@ The property tree is a direct mirror of AE's `PropertyGroup` / `Property` object
 
 ## What gets written
 
-By default (`includeUnmodified: false`), a property is written only if AE reports it as modified, or it has keyframes or an expression. Text documents and shape paths are always written. Some groups are skipped entirely when they can't apply:
+By default (`includeUnmodified: true`, exporter 1.2 and newer), the exporter reads and writes the value of every property it visits, whether or not AE reports it as modified. `mod` still says which ones were. The importer then never has to rely on EffectCraft's defaults, which aren't always After Effects' (a new null's anchor point, for one: AE puts it at the null's top-left corner).
+
+With the **Faster** option (`includeUnmodified: false`, and the only behaviour of exporter 1.1 and older), a property is written only if AE reports it as modified, or it has keyframes or an expression. Text documents and shape paths are always written. For a property it leaves out, the importer uses After Effects' default where it knows EffectCraft's differs, and EffectCraft's otherwise (see [usage](usage.md#what-the-importer-sets)).
+
+Either way, some groups are skipped entirely because they can't apply:
 - Material Options and Geometry Options on 2D layers
 - the Audio group on layers without audio
 - layer styles that aren't switched on
+
+A marker property has no static value: markers are written only as keyframes. Exporter 1.0 also wrote the value of an empty marker property, which importers ignore.
 
 ## Versioning
 
