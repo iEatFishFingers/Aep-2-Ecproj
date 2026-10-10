@@ -21,7 +21,12 @@ The export covers folders, footage (with interpretation settings), comps, every 
 3. Go to **File ▸ Scripts ▸ Run Script File…** and choose `ae\AE2EC_Export.jsx`.
 4. Keep the default options and save the file. By default it's saved next to the `.aep` as `<project>.ae2ec.json`. A progress window shows how far it has got, and a `.ae2ec.log` next to the export records each layer.
 
-**2. Import into EffectCraft.** Pick one of these:
+**2. Import into EffectCraft.** The easiest way is from EffectCraft's menu:
+
+1. Once, and again after changing any of the scripts: `powershell -ExecutionPolicy Bypass -File tools\install.ps1`.
+2. In EffectCraft, go to **File ▸ Import ▸ After Effects Project (.ae2ec.json)…** (or **File ▸ Scripts ▸ Import from After Effects**), pick the export, check the options and click **Import**. The report opens when it's done, with **Relink Footage…**, **Verify** and **Save Report…**.
+
+Or from PowerShell:
 
 ```powershell
 # a new .ecproj next to the export (EffectCraft doesn't need to be open)
@@ -41,7 +46,11 @@ You can also double-click `tools\import.bat` and drop the JSON file onto the win
 |---|---|
 | `ae/AE2EC_Export.jsx` | The After Effects exporter. It's ExtendScript (ES3) with no dependencies. |
 | `effectcraft/AE2EC_Import.jsx` | The EffectCraft importer, written against EffectCraft's AE-style scripting model. |
+| `effectcraft/AE2EC_ImportDialog.jsx` | EffectCraft's **Import from After Effects** dialog: pick the export, choose options, import, then read the report, relink, verify and save the report. `tools\install.ps1` joins it with the importer, relink and verify scripts and installs it. |
 | `effectcraft/AE2EC_Relink.jsx` | Run it in EffectCraft to replace any footage placeholders with their original files. |
+| `effectcraft/AE2EC_Verify.jsx` | After an import, it compares what EffectCraft built with the AE export, property by property. Build it with `tools\build-script.ps1 -Verify`. |
+| `tools/install.ps1` | Installs the import dialog in EffectCraft's Scripts folder (File ▸ Import and File ▸ Scripts find it there). |
+| `tools/test.ps1` | Tests the import dialog with this repo's scripts against the installed EffectCraft, with nothing to build or install; see [testing](docs/testing.md#testing-the-import-dialog-no-build-needed). |
 | `tools/import.ps1`, `tools/import.bat` | Run an import (headless to a `.ecproj`, or live into the app) and summarise the report. |
 | `tools/build-script.ps1` | Joins the data and the importer into one runnable `.jsx`. EffectCraft scripts can't include other files, so this is needed. |
 | `tests/roundtrip.jsx` | An end-to-end test that runs inside EffectCraft: build, export, import, re-export, then compare. |
@@ -54,4 +63,4 @@ You can also double-click `tools\import.bat` and drop the JSON file onto the win
 - **A real project has been converted**: `nonmummy .aep` (Lily Allen visualiser, AE 2020) has 8 comps and 42 layers, and all footage, keyframes, masks, effects and expressions came across. The only remaining note is that EffectCraft shows the animated GIF as a still. See [docs/testing.md](docs/testing.md).
 - See [docs/coverage.md](docs/coverage.md) for known gaps. The main ones are third-party plug-ins, effect data scripts can't read (such as Curves), per-character text styling, and EffectCraft importing GIFs as stills.
 
-Requires After Effects (any recent version) and EffectCraft 0.6.0 or newer with `effectcraft-cli.exe`, which installs to `C:\Program Files\EffectCraft` on Windows.
+Requires After Effects (any recent version) and EffectCraft 0.6.0 or newer with `effectcraft-cli.exe`, which installs to `C:\Program Files\EffectCraft` on Windows. The import dialog needs an EffectCraft whose scripts can show file dialogs (`File.openDialog`); the File ▸ Import menu item is on the `ae2ec-import` branch of EffectCraft. In an EffectCraft without file dialogs for scripts, the dialog can't ask for the export and closes straight away; use `tools\import.ps1` there.

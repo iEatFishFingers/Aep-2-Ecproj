@@ -37,7 +37,21 @@ AE doesn't redraw its window while a script runs, so Windows may label it *Not r
 
 ## 2. Import into EffectCraft
 
-> **Tip:** importing from inside the app (option B, C or D) is the most reliable way to link footage. If a headless import leaves placeholders, open the project and run `effectcraft\AE2EC_Relink.jsx` (see [Relinking footage](#relinking-footage)).
+> **Tip:** importing from inside the app (the menu, or option B, C or D) is the most reliable way to link footage. If a headless import leaves placeholders, open the project and run `effectcraft\AE2EC_Relink.jsx` (see [Relinking footage](#relinking-footage)).
+
+### From the menu (easiest)
+
+1. Install the import dialog once: `powershell -ExecutionPolicy Bypass -File tools\install.ps1`. It builds `effectcraft\AE2EC_ImportDialog.jsx` together with the importer, relink and verify scripts into `%APPDATA%\EffectCraft\Scripts\Import from After Effects.jsx`. Run it again whenever you change any of those scripts or the export format; EffectCraft doesn't need restarting.
+2. In EffectCraft, go to **File ▸ Import ▸ After Effects Project (.ae2ec.json)…** (or **File ▸ Scripts ▸ Import from After Effects**) and pick the export.
+3. The dialog shows the project, its After Effects version and what's in it. Choose the options (the same as `import.ps1`'s: a folder named after the project, opening its active comp, `-ApplyAll`) and click **Import**. **Browse…** picks another export.
+4. While it imports, a progress window shows each step (footage, then each layer) with a log, and EffectCraft keeps drawing. **Cancel** stops it; what was imported so far stays, and **Edit ▸ Undo** removes it.
+5. The import goes into the project that's open, inside a folder named after the After Effects project, and isn't saved yet. The report lists what to look at: missing footage, effects EffectCraft doesn't have, settings to redo by hand and notes.
+   - **Relink Footage…** asks where the footage is now, then relinks the placeholders, looking first where the footage was and then by file name in that folder.
+   - **Verify** compares what EffectCraft built with the export (see [Verify](#4-verify-the-import-automatically)), and adds the differences to the list.
+   - **Save Report…** saves the report as JSON next to the export.
+   - **Save Project As…** saves the project as an `.ecproj`, named after the After Effects project. You can also use **File ▸ Save As** later.
+
+Everything is created as one undo step. The export file you pick, the report you save and the footage folder you choose can be read and written without EffectCraft's **Allow Scripts to Write Files and Access Network** setting, because you picked them.
 
 ### Option A: headless, to a new `.ecproj`
 
@@ -102,9 +116,20 @@ If the footage has moved, re-run the import with `-PathMap "old=>new"`. Alternat
 | `customValues` | Effect data that AE scripting can't read, such as the curve in **Curves**. The effect is added with default settings, so redo those settings by hand. |
 | `unsupported` | Properties or groups EffectCraft doesn't have under that match name. |
 | `failedValues` | Values EffectCraft refused. They're listed by match name with counts. |
-| `notes` | Everything else, for example "animated GIF imported as a still" or "track matte layer isn't the one above". |
+| `rescaled` | Settings that the two apps store on different scales, and the factor applied. For example, CC Jaws Completion is `0..1` in AE but `0..100` in EffectCraft, and Drop Shadow Opacity is `0..255` versus `0..100`. |
+| `notes` | Everything else, for example "animated GIF imported as a still", or "image sequence has a different number of frames on disk". |
 
-## 4. Check the result
+## 4. Verify the import automatically
+
+`AE2EC_Verify.jsx` re-exports what EffectCraft built, using the exporter's own code, and compares it with the After Effects export. It checks footage frame rates and lengths, comp settings, every layer's timing, switches, parent and matte, and every property AE recorded, including values, keyframes, eases and expressions. To use it:
+
+1. Build it: `powershell -ExecutionPolicy Bypass -File tools\build-script.ps1 -Json "C:\...\project.ae2ec.json" -Verify`. This writes `project.ae2ec-verify.jsx`.
+2. With the imported project open in EffectCraft, go to **File ▸ Scripts ▸ Run Script File…** and choose that file.
+3. The result counts the differences by kind (`value`, `keyframe value`, `missing in EffectCraft`…) and lists examples with their path, e.g. `main > #5 necklace > Effects > Drop Shadow > Opacity`.
+
+Claude runs this after every import it does through the MCP connection.
+
+## 5. Check the result by eye
 
 - Render the same frames in both apps and compare them side by side. Claude can do this through the MCP connection with `render_frame`.
 - Expressions are copied word for word. EffectCraft's expression engine follows AE's (`wiggle`, `loopOut`, `thisComp.layer()`…), but look out for errors in the Timeline.

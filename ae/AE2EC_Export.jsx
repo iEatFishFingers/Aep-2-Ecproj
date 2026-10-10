@@ -21,7 +21,7 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
 (function (X) {
 
     X.EXPORTER_NAME = "AE2EC_Export.jsx";
-    X.EXPORTER_VERSION = "1.0.0";
+    X.EXPORTER_VERSION = "1.1.0";
     X.FORMAT = "ae2ec";
     X.FORMAT_VERSION = 1;
 
@@ -326,6 +326,15 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
 
         var node = { mn: mn, n: p.name, pt: "P", vt: vt };
         if (mod !== undefined) { node.mod = mod; }
+        if (vt === "OneD") {
+            // the property's range tells the importer which scale AE uses (0..1, 0..100, 0..255)
+            var hasMin = tryGet(function () { return p.hasMin; }, false);
+            var hasMax = tryGet(function () { return p.hasMax; }, false);
+            if (hasMin || hasMax) {
+                node.rng = [hasMin ? tryGet(function () { return p.minValue; }, null) : null,
+                    hasMax ? tryGet(function () { return p.maxValue; }, null) : null];
+            }
+        }
         var hasData = false;
 
         if (nk > 0) {
@@ -370,9 +379,23 @@ var AE2EC = (typeof AE2EC !== "undefined" && AE2EC) ? AE2EC : {};
         return false;
     }
 
+    var EFFECT_NAMES = null;   // match name -> display name, from app.effects
+    function effectDisplayName(mn) {
+        if (EFFECT_NAMES === null) {
+            EFFECT_NAMES = {};
+            var list = tryGet(function () { return app.effects; }, null), i;
+            if (list) { for (i = 0; i < list.length; i++) { try { EFFECT_NAMES[list[i].matchName] = list[i].displayName; } catch (e) { } } }
+        }
+        return EFFECT_NAMES[mn];
+    }
+
     function serGroup(g, opts, stats, parentPt) {
         if (skipGroup(g, opts)) { stats.skipped++; return null; }
         var node = { mn: g.matchName, n: g.name, pt: ptName(g) };
+        if (parentPt === "I") {
+            var fxName = effectDisplayName(g.matchName);
+            if (fxName) { node.fx = fxName; }     // lets the importer find an effect whose match name differs
+        }
         var stylesRoot = (g.matchName === "ADBE Layer Styles");
         if (stylesRoot) { opts.inLayerStyles = true; }
         if (tryGet(function () { return g.canSetEnabled; }, false)) {

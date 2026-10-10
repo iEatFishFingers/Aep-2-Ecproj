@@ -34,6 +34,23 @@ exported: 2 comps, 10 layers, 3 footage, 235 properties, 9 keyframes, 2 expressi
 imported: 2 comps, 10 layers, 3 effects, 1 mask, 228 properties set, 9 keyframes, 2 expressions
 ```
 
+## Testing the import dialog (no build needed)
+
+`tools\test.ps1` tests the import dialog against the EffectCraft you have installed, with the scripts in this repo, so a change to any `effectcraft\*.jsx` file can be checked in seconds. Nothing gets built or installed.
+
+```powershell
+# the round-trip fixture
+powershell -ExecutionPolicy Bypass -File tools\test.ps1
+# a real export, saving the result to open it afterwards, and leaving EffectCraft open
+powershell -ExecutionPolicy Bypass -File tools\test.ps1 -Json "C:\...\prince of the scene .ae2ec.json" -Save "$env:TEMP\ae2ec-out" -Keep
+```
+
+Several exports run one after another: `& .\tools\test.ps1 -Json a.ae2ec.json, b.ae2ec.json` (from PowerShell; `powershell -File` can't pass a list).
+
+It starts EffectCraft with the control channel and a settings folder of its own, so your settings, installed scripts and auto-saves aren't touched. Then it drives **Import from After Effects** as a user would: it gives the export instead of picking it (`AE2EC_JSON_PATH`), clicks **Import**, follows the progress, and prints the report and the result of **Verify**. It exits with 1 if an import failed. `-Exe` tests another EffectCraft build, `-NoVerify` skips Verify.
+
+When the change works, run `tools\install.ps1` to use it in your own EffectCraft. You only need a new EffectCraft build when EffectCraft itself changes.
+
 ## Testing the After Effects side
 
 The exporter only uses documented AE scripting calls, and it's written in ES3 so ExtendScript can run it. It was checked for ES5-only syntax. Every AE-only call is wrapped so that a property AE refuses to read is skipped rather than stopping the export.
@@ -60,3 +77,30 @@ Two problems showed up in the first attempt:
 - Every footage item became a placeholder because of the `File.exists` restriction.
 
 Before the import, the footage types in that folder (MP3, PNG, WebP, GIF) were checked to import in EffectCraft 0.6.0. The GIF came in as a still.
+
+### Real project: "prince of the scene" (9 October 2026)
+
+The source was `prince of the scene .aep` (AE 2020), exported with exporter 1.0.0: 2 comps, 101 layers (34 text, 20 shape, 2 cameras), 11 PNG image sequences, 109 keyframes, 17 expressions, 40 effects including CC Jaws, Motion Tile, Texturize and Transform, and text animators.
+
+The verify tool found these problems in the first import, all fixed in importer 1.2.0:
+
+| Problem | Cause | Fix |
+|---|---|---|
+| Image sequences played at the wrong speed | EffectCraft imports sequences at 30 fps | Frame rate set with Interpret Footage |
+| CC Jaws covered the whole frame instead of leaving cinematic bars | AE stores Completion as 0..1 and EffectCraft as 0..100 | Range rescaling (`rng`, known-ranges table) |
+| Drop Shadow opacity was 100% instead of 64% | AE stores 0..255 and EffectCraft 0..100 | Range rescaling |
+| Noise effect missing | AE's `ADBE Noise2` is EffectCraft's `ADBE Noise` | Fall back to the effect's name |
+| Text animators had two range selectors | EffectCraft adds a default selector | Remove auto-created children first |
+| Animator Opacity was missing | It has to be added, not looked up | `addProperty` fallback |
+| Text stroke switched on | Setting the stroke width enables stroke in EffectCraft | Skip stroke fields when stroke is off |
+| Footage layers renamed "clip 2", "clip 3" | Unset AE names weren't copied | Always set the layer name |
+
+After the fixes:
+
+```
+import: 18 footage, 0 placeholders, 101 layers, 40 effects, 345 properties, 109 keys,
+        17 expressions; nothing missing, unsupported or failed; 9 footage items re-interpreted
+verify: 101 layers, 345 properties, 95 keyframes checked; remaining differences:
+        2 image sequences whose files on disk differ from what AE imported (t_ has gaps,
+        f_[0001-0151] has 180 files now)
+```

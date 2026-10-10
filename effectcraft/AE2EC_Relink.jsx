@@ -8,7 +8,7 @@
  * (tools\build-script.ps1 does not need to be involved) to also look for each missing
  * item by file name in that folder, e.g. after moving a project to another machine.
  */
-(function () {
+var AE2EC_RELINK = (function () {
     var folder = (typeof AE2EC_RELINK_FOLDER !== "undefined" && AE2EC_RELINK_FOLDER) ? String(AE2EC_RELINK_FOLDER).replace(/\\/g, "/") : null;
     var done = [], failed = [], i, it, path, comment, tried;
 
@@ -51,3 +51,5 @@
     try { writeLn(msg); } catch (e3) { }
     return JSON.stringify({ relinked: done, missing: failed }, null, 1);
 })();
+
+AE2EC_RELINK;

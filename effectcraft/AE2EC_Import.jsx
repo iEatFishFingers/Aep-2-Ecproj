@@ -19,14 +19,15 @@
 
 var AE2EC_IMPORT = (function () {
 
-    var VERSION = "1.0.1";
+    var VERSION = "1.2.0";
 
     var DEFAULTS = {
         applyAll: false,         // also set properties AE reported as unmodified
         rootFolder: true,        // put everything in a folder named after the AE project
         pathMap: [],             // [["D:/old/footage", "E:/new/footage"], ...] prefix replacements
         openComp: true,          // open the AE project's active comp when done
-        save: null               // path of an .ecproj to save to when done
+        save: null,              // path of an .ecproj to save to when done
+        progress: null           // function (done, total, what), called as the import goes (see step)
     };
 
     // ------------------------------------------------------------------ report
@@ -40,11 +41,30 @@ var AE2EC_IMPORT = (function () {
         unsupported: {},
         failedValues: {},
         customValues: {},
+        rescaled: {},
         notes: []
     };
 
     function bump(map, key) { map[key] = (map[key] || 0) + 1; }
+
+    // Progress for opts.progress: `what` is being done now, step `done` of `total` (each footage
+    // item, each layer made, each layer's properties). The callback returning false stops the
+    // import (CANCELLED); what was made so far stays, as one undo step.
+    var P = { done: 0, total: 1, fn: null }, CANCELLED = new Error("Import cancelled");
+    function step(what) {
+        P.done++;
+        if (P.fn && P.fn(P.done, P.total, what) === false) { throw CANCELLED; }
+    }
     function note(msg) { if (R.notes.length < 200) { R.notes.push(msg); } }
+
+    // EffectCraft engine commands with parameters. Scripts reach them through __call, an
+    // internal bridge (app.executeCommand drops parameters). Used for things the scripting
+    // model can't set: footage interpretation, track mattes on any layer, layer styles.
+    // If a future EffectCraft changes it, the importer falls back and reports what it skipped.
+    function ec(id, params) {
+        if (typeof __call !== "function") { throw new Error("EffectCraft command bridge not available"); }
+        return __call(id, params || {});
+    }
 
     // ------------------------------------------------------------------ enums / values
     function enumVal(enumName, v) {
@@ -68,16 +88,24 @@ var AE2EC_IMPORT = (function () {
         return s;
     }
 
+    var TEXT_LAST = { applyFill: 1, applyStroke: 1 };
+    // EffectCraft switches stroke (or fill) on as soon as its width/colour is touched, even when
+    // applyStroke is set to false afterwards, so leave those fields alone when AE had them off
+    var STROKE_FIELDS = { strokeColor: 1, strokeWidth: 1, strokeOverFill: 1 };
+    var FILL_FIELDS = { fillColor: 1 };
     function deText(o, base) {
         var d = base || new TextDocument(o.text || "");
         var k, v;
         for (k in o) {
-            if (!o.hasOwnProperty(k)) { continue; }
+            if (!o.hasOwnProperty(k) || TEXT_LAST[k]) { continue; }
+            if (o.applyStroke === false && STROKE_FIELDS[k]) { continue; }
+            if (o.applyFill === false && FILL_FIELDS[k]) { continue; }
             v = o[k];
             if (k === "justification") { v = enumVal("ParagraphJustification", v); if (v === undefined) { continue; } }
             if (k === "pointText" || k === "boxText") { continue; }   // read-only, implied by boxTextSize
             try { d[k] = v; } catch (e) { }
         }
+        for (k in TEXT_LAST) { if (o.hasOwnProperty(k)) { try { d[k] = o[k]; } catch (e2) { } } }
         return d;
     }
 
@@ -89,6 +117,31 @@ var AE2EC_IMPORT = (function () {
         }
         if (o.params) { try { m.setParameters(o.params); } catch (e2) { } }
         return m;
+    }
+
+    // After Effects and EffectCraft sometimes store the same setting on different scales
+    // (e.g. CC Jaws Completion 0..1 vs 0..100, Drop Shadow Opacity 0..255 vs 0..100).
+    // The exporter records AE's range per property ("rng"); for older exports a small table helps.
+    var KNOWN_RANGES = {
+        "CC Jaws-0001": [0, 1],
+        "ADBE Drop Shadow-0002": [0, 255],
+        "ADBE Radial Shadow-0002": [0, 255]
+    };
+    var SCALE_RULES = [[1, 100], [255, 100], [100, 1], [100, 255], [1, 255], [255, 1]];
+    function rangeFactor(node, prop) {
+        if (node.vt !== "OneD") { return 1; }
+        var ae = node.rng || KNOWN_RANGES[node.mn];
+        if (!ae || ae[1] === null || ae[1] === undefined) { return 1; }
+        var ecMax = null;
+        try { if (prop.hasMax) { ecMax = prop.maxValue; } } catch (e) { }
+        if (ecMax === null || Math.abs(ecMax - ae[1]) < 1e-9) { return 1; }
+        for (var i = 0; i < SCALE_RULES.length; i++) {
+            if (Math.abs(ae[1] - SCALE_RULES[i][0]) < 1e-9 && Math.abs(ecMax - SCALE_RULES[i][1]) < 1e-9) {
+                bump(R.rescaled, node.mn + " (x" + (Math.round(ecMax / ae[1] * 10000) / 10000) + ")");
+                return ecMax / ae[1];
+            }
+        }
+        return 1;
     }
 
     function deValue(vt, v, prop) {
@@ -112,10 +165,11 @@ var AE2EC_IMPORT = (function () {
     function applyKeys(prop, node) {
         var i, k, idx;
         try { while (prop.numKeys > 0) { prop.removeKey(prop.numKeys); } } catch (e0) { }
+        var f = rangeFactor(node, prop);
         for (i = 0; i < node.k.length; i++) {
             k = node.k[i];
             try {
-                prop.setValueAtTime(k.t, deValue(node.vt, k.v, prop));
+                prop.setValueAtTime(k.t, (f !== 1 && typeof k.v === "number") ? k.v * f : deValue(node.vt, k.v, prop));
                 R.counts.keys++;
             } catch (e1) { bump(R.failedValues, node.mn + " (keyframe)"); }
         }
@@ -164,7 +218,8 @@ var AE2EC_IMPORT = (function () {
         } else if (wantValue(node, opts)) {
             try {
                 if (prop.numKeys > 0) { while (prop.numKeys > 0) { prop.removeKey(prop.numKeys); } }
-                prop.setValue(deValue(node.vt, node.v, prop));
+                var fv = rangeFactor(node, prop);
+                prop.setValue((fv !== 1 && typeof node.v === "number") ? node.v * fv : deValue(node.vt, node.v, prop));
                 R.counts.props++;
             } catch (e1) { bump(R.failedValues, node.mn); }
         }
@@ -181,7 +236,34 @@ var AE2EC_IMPORT = (function () {
         var p = null;
         try { p = group.property(node.mn); } catch (e) { p = null; }
         if (!p && node.n) { try { p = group.property(node.n); } catch (e2) { p = null; } }
+        if (!p && node.mn) {
+            // effect parameters: "<effect match name>-0003" is the 3rd parameter in both apps
+            var m = /-(\d{4})$/.exec(node.mn);
+            if (m) { try { p = group.property(parseInt(m[1], 10)); } catch (e3) { p = null; } }
+        }
+        if (!p && node.mn) {
+            // groups like text animator Properties hold children that must be added
+            try { if (group.canAddProperty(node.mn)) { p = group.addProperty(node.mn); } } catch (e4) { p = null; }
+        }
         return p;
+    }
+
+    // add an effect / shape item / animator: match name first, then the effect's display name,
+    // then the (possibly renamed) instance name
+    function addChild(group, c) {
+        var tries = [c.mn], i, p = null;
+        if (c.fx) { tries.push(c.fx); }
+        if (c.n && c.n !== c.fx) { tries.push(c.n); }
+        for (i = 0; i < tries.length && !p; i++) {
+            try { if (group.canAddProperty(tries[i])) { p = group.addProperty(tries[i]); } } catch (e) { p = null; }
+        }
+        return p;
+    }
+
+    // a freshly added group may arrive with default children EffectCraft creates for you
+    // (e.g. a text animator comes with a Range Selector); clear them before adding AE's own
+    function clearIndexed(g) {
+        try { while (g.numProperties > 0) { g.property(g.numProperties).remove(); } } catch (e) { }
     }
 
     function applyGroupAttrs(g, node) {
@@ -205,15 +287,15 @@ var AE2EC_IMPORT = (function () {
 
     function applyChildren(group, node, opts, ctx) {
         if (!node.ch) { return; }
-        var i, c, p, path = ctx.path;
+        var i, c, p, path = ctx.path, fresh = ctx.fresh;
+        if (node.pt === "I" && fresh) { clearIndexed(group); }
         for (i = 0; i < node.ch.length; i++) {
             c = node.ch[i];
             ctx.path = path + " > " + (c.n || c.mn);
+            ctx.fresh = fresh;
             if (node.pt === "I") {
-                p = null;
-                var canAdd = false;
-                try { canAdd = group.canAddProperty(c.mn); } catch (e0) { canAdd = true; }
-                if (canAdd) { try { p = group.addProperty(c.mn); } catch (e1) { p = null; } }
+                p = addChild(group, c);
+                ctx.fresh = true;
                 if (!p) {
                     if (node.mn === "ADBE Effect Parade") { bump(R.missingEffects, c.n + " [" + c.mn + "]"); }
                     else { bump(R.unsupported, c.mn); }
@@ -230,6 +312,7 @@ var AE2EC_IMPORT = (function () {
             applyNode(p, c, opts, ctx);
         }
         ctx.path = path;
+        ctx.fresh = fresh;
     }
 
     function applyNode(p, node, opts, ctx) {
@@ -250,6 +333,17 @@ var AE2EC_IMPORT = (function () {
             ls = null; st = null;
             try { ls = layer.property("ADBE Layer Styles"); } catch (e0) { }
             if (ls) { st = findChild(ls, c); }
+            var STYLE_KEYS = { "dropShadow/enabled": "dropShadow", "innerShadow/enabled": "innerShadow",
+                "outerGlow/enabled": "outerGlow", "innerGlow/enabled": "innerGlow", "bevelEmboss/enabled": "bevelEmboss",
+                "chromeFX/enabled": "satin", "solidFill/enabled": "colorOverlay", "gradientFill/enabled": "gradientOverlay",
+                "frameFX/enabled": "stroke" };
+            if (!st && STYLE_KEYS[c.mn]) {
+                try {
+                    ec("layer.style.add", { style: STYLE_KEYS[c.mn], layers: [layer.id] });
+                    ls = layer.property("ADBE Layer Styles");
+                    st = ls ? findChild(ls, c) : null;
+                } catch (eSt) { st = null; }
+            }
             if (!st) {
                 try {
                     var comp = layer.containingComp, j;
@@ -289,7 +383,7 @@ var AE2EC_IMPORT = (function () {
 
     function importFootage(it, opts) {
         if (it.kind === "solid") { return null; }      // solids are recreated per layer
-        var item = null, path = null, why = null;
+        var item = null, path = null, why = null, madePlaceholder = false;
         if (it.kind === "file" && it.file) {
             path = remapPath(it.file, opts);
             // Import straight away: EffectCraft only lets scripts *check* files inside the
@@ -309,26 +403,46 @@ var AE2EC_IMPORT = (function () {
                 item = app.project.importPlaceholder(it.name, it.width || 1920, it.height || 1080,
                     it.frameRate || 30, it.duration || 10);
                 R.counts.placeholders++;
+                madePlaceholder = true;
                 // remember where the file should be, for effectcraft/AE2EC_Relink.jsx
                 if (path) { try { item.comment = "ae2ec:" + path; } catch (eC) { } }
             } catch (e2) { note("Could not create placeholder for " + it.name + ": " + e2); return null; }
         }
         try { item.name = it.name; } catch (e3) { }
-        var ms = item.mainSource, ip = it.interp || {};
-        try {
-            if (it.isStill === false && it.hasVideo !== false && ms && ms.isStill === true) {
+        var ip = it.interp || {}, ms = null;
+        try { ms = item.mainSource; } catch (eMs) { }
+        if (!madePlaceholder) {
+            var curStill = false;
+            try { curStill = ms && ms.isStill === true; } catch (eSt) { }
+            if (it.isStill === false && it.hasVideo !== false && curStill) {
                 note("'" + it.name + "' is animated in After Effects but EffectCraft imported it as a still (" +
                     (it.duration ? it.duration + " s" : "") + "). Convert it to a video or image sequence.");
             }
-        } catch (e4) { }
-        if (ms) {
-            if (ip.conformFrameRate) { setIf(ms, "conformFrameRate", ip.conformFrameRate); }
-            setIf(ms, "alphaMode", enumVal("AlphaMode", ip.alphaMode));
-            setIf(ms, "invertAlpha", ip.invertAlpha);
-            if (ip.loop && ip.loop > 1) { setIf(ms, "loop", ip.loop); }
-            setIf(ms, "fieldSeparationType", enumVal("FieldSeparationType", ip.fieldSeparationType));
+            // interpretation: frame rate (image sequences default to 30 fps in EffectCraft), alpha, loop, aspect
+            var params = { items: [item.id] }, change = false, targetFps = ip.conformFrameRate || it.frameRate;
+            try {
+                if (it.hasVideo !== false && it.isStill === false && targetFps && !curStill &&
+                        Math.abs(item.frameRate - targetFps) > 0.0005) { params.frameRate = targetFps; change = true; }
+            } catch (eFr) { }
+            var alphaMap = { IGNORE: "ignore", STRAIGHT: "straight", PREMULTIPLIED: "premultiplied" };
+            if (ip.alphaMode && alphaMap[ip.alphaMode] && ip.alphaMode !== "STRAIGHT") { params.alpha = alphaMap[ip.alphaMode]; change = true; }
+            if (ip.invertAlpha) { params.invertAlpha = true; change = true; }
+            if (ip.loop && ip.loop > 1) { params.loop = ip.loop; change = true; }
+            var fieldMap = { OFF: "off", UPPER_FIELD_FIRST: "upper", LOWER_FIELD_FIRST: "lower" };
+            if (ip.fieldSeparationType && ip.fieldSeparationType !== "OFF" && fieldMap[ip.fieldSeparationType]) { params.fields = fieldMap[ip.fieldSeparationType]; change = true; }
+            try { if (it.pixelAspect && Math.abs(item.pixelAspect - it.pixelAspect) > 0.0001) { params.pixelAspect = it.pixelAspect; change = true; } } catch (ePa) { }
+            if (change) {
+                try { ec("file.interpretFootage", params); R.counts.interpreted = (R.counts.interpreted || 0) + 1; }
+                catch (eIn) { note("Could not set interpretation of '" + it.name + "' (" + JSON.stringify(params) + "): " + eIn); }
+            }
+            // image sequences with gaps: AE spans the whole number range, EffectCraft only the files present
+            try {
+                if (it.sequence && it.duration && Math.abs(item.duration - it.duration) > 1.5 / (targetFps || 30)) {
+                    note("Image sequence '" + it.name + "' is " + (Math.round(it.duration * 1000) / 1000) + " s in After Effects but " +
+                        (Math.round(item.duration * 1000) / 1000) + " s in EffectCraft: frames are probably missing on disk (AE holds over gaps).");
+                }
+            } catch (eSq) { }
         }
-        try { if (it.pixelAspect && Math.abs(item.pixelAspect - it.pixelAspect) > 0.0001) { setIf(item, "pixelAspect", it.pixelAspect); } } catch (e5) { }
         return item;
     }
 
@@ -405,7 +519,7 @@ var AE2EC_IMPORT = (function () {
 
     function applyLayerAttrs(lay, L) {
         var a = L.attrs || {};
-        if (a.isNameSet !== false || L.type !== "footage") { setIf(lay, "name", L.name); }
+        setIf(lay, "name", L.name);   // always: EffectCraft numbers duplicate footage names ("clip 2")
         setIf(lay, "label", a.label);
         setIf(lay, "comment", a.comment);
         setIf(lay, "threeDLayer", a.threeDLayer);
@@ -434,11 +548,11 @@ var AE2EC_IMPORT = (function () {
         var type = enumVal("TrackMatteType", L.matte.type);
         if (L.matte.layer && L.matte.layer !== L.index - 1) {
             var target = layers[L.matte.layer];
-            if (target && typeof lay.setTrackMatte === "function") {
-                try { lay.setTrackMatte(target, type); return; } catch (e) { }
+            var kindMap = { ALPHA: "alpha", ALPHA_INVERTED: "alphaInverted", LUMA: "luma", LUMA_INVERTED: "lumaInverted" };
+            if (target) {
+                try { ec("layer.setTrackMatte", { layer: lay.id, matte: target.id, kind: kindMap[L.matte.type] || "alpha" }); return; }
+                catch (e) { note("Layer '" + L.name + "': could not use layer " + L.matte.layer + " as its track matte (" + e + "); used the layer above"); }
             }
-            note("Layer '" + L.name + "': track matte uses layer " + L.matte.layer +
-                " (not the layer above); set to the layer above instead");
         }
         setIf(lay, "trackMatteType", type);
     }
@@ -448,6 +562,7 @@ var AE2EC_IMPORT = (function () {
         // add bottom-up: each new layer goes on top, so the final order matches AE
         for (i = Ls.length - 1; i >= 0; i--) {
             L = Ls[i];
+            step(comp.name + ": making " + L.name);
             try { lay = createLayer(comp, L, itemMap); } catch (e) { note("Could not create layer '" + L.name + "': " + e); lay = null; }
             layers[L.index] = lay;
             if (lay) { try { applyLayerAttrs(lay, L); } catch (e1) { note("Layer attrs '" + L.name + "': " + e1); } }
@@ -460,6 +575,7 @@ var AE2EC_IMPORT = (function () {
         }
         for (i = 0; i < Ls.length; i++) {        // properties
             L = Ls[i]; lay = layers[L.index];
+            step(comp.name + ": setting up " + L.name);
             if (!lay) { continue; }
             var ctx = { layerNode: L, path: comp.name + " > " + L.name };
             var j, p, n;
@@ -511,6 +627,12 @@ var AE2EC_IMPORT = (function () {
         var opts = {}, user = (typeof AE2EC_OPTIONS !== "undefined" && AE2EC_OPTIONS) ? AE2EC_OPTIONS : {};
         for (k in DEFAULTS) { opts[k] = DEFAULTS[k]; }
         for (k in user) { if (user.hasOwnProperty(k)) { opts[k] = user[k]; } }
+        P.fn = typeof opts.progress === "function" ? opts.progress : null;
+        P.total = 0;
+        for (k = 0; k < (data.items || []).length; k++) {
+            var item = data.items[k];
+            P.total += item.type === "footage" ? 1 : item.type === "comp" ? 2 * (item.layers || []).length : 0;
+        }
 
         app.beginUndoGroup("Import After Effects project (ae2ec)");
         var items = data.items || [], itemMap = {}, i, it, made;
@@ -528,6 +650,7 @@ var AE2EC_IMPORT = (function () {
         for (i = 0; i < items.length; i++) {              // 2. footage
             it = items[i];
             if (it.type !== "footage") { continue; }
+            step("Footage: " + it.name);
             made = importFootage(it, opts);
             if (made) { itemMap[it.id] = made; }
         }
@@ -551,7 +674,10 @@ var AE2EC_IMPORT = (function () {
         for (i = 0; i < items.length; i++) {              // 5. layers
             it = items[i];
             if (it.type !== "comp" || !itemMap[it.id]) { continue; }
-            try { buildComp(itemMap[it.id], it, itemMap, opts); } catch (e3) { note("Comp '" + it.name + "': " + e3); R.ok = false; }
+            try { buildComp(itemMap[it.id], it, itemMap, opts); } catch (e3) {
+                if (e3 === CANCELLED) { throw e3; }
+                note("Comp '" + it.name + "': " + e3); R.ok = false;
+            }
         }
         app.endUndoGroup();
 
@@ -562,6 +688,8 @@ var AE2EC_IMPORT = (function () {
             try { app.project.save(new File(opts.save)); R.saved = opts.save; } catch (e5) { note("Save failed: " + e5); R.ok = false; }
         }
         R.source = { file: data.project ? data.project.file : null, exporter: data.exporter, host: data.host };
+        // keep the report inside the project too (scripts can't write files): the import folder's comment
+        if (root) { try { root.comment = "ae2ec import report\n" + JSON.stringify(R); } catch (eRc) { } }
         return R;
     }
 
@@ -571,6 +699,7 @@ var AE2EC_IMPORT = (function () {
     } catch (err) {
         R.ok = false;
         R.error = String(err) + (err && err.line ? " (line " + err.line + ")" : "");
+        if (err === CANCELLED) { R.cancelled = true; }
         try { app.endUndoGroup(); } catch (e) { }
         report = R;
     }

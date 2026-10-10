@@ -87,6 +87,8 @@ The property tree is a direct mirror of AE's `PropertyGroup` / `Property` object
   "en": true,                 // enabled switch, when the group has one (effects, shape items…)
   "mod": true,                // AE's isModified, when available
   "i": 2,                     // position in an indexed parent
+  "fx": "Noise",              // effects: AE's display name for the effect (exporter 1.1+), used when
+                              //      EffectCraft knows the effect under a different match name
   "mask": { "mode": "ADD", "inverted": false, "rotoBezier": false, "motionBlur": "SAME_AS_LAYER",
             "featherFalloff": "FFO_SMOOTH", "color": [1,0,0], "locked": false },   // mask atoms only
   "ch": [ node, … ] }
@@ -99,6 +101,8 @@ The property tree is a direct mirror of AE's `PropertyGroup` / `Property` object
   "vt": "TwoD_SPATIAL",       // OneD TwoD TwoD_SPATIAL ThreeD ThreeD_SPATIAL COLOR SHAPE TEXT_DOCUMENT
                               // MARKER LAYER_INDEX MASK_INDEX CUSTOM_VALUE NO_VALUE
   "mod": true,                // isModified
+  "rng": [0, 1],              // OneD only (exporter 1.1+): AE's [min, max] for the property; tells the
+                              //      importer which scale AE stores it on (0..1, 0..100, 0..255)
   "v": [960, 540],            // static value (pre-expression); absent when keyframed
   "k": [ key, … ],            // keyframes
   "x": "wiggle(2,20)",        // expression text
