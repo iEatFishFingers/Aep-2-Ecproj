@@ -65,3 +65,8 @@ You can also double-click `tools\import.bat` and drop the JSON file onto the win
 - See [docs/coverage.md](docs/coverage.md) for known gaps. The main ones are third-party plug-ins, effect data scripts can't read (such as Curves), per-character text styling, and GIFs, which EffectCraft 0.6.0 imports as stills (0.7.0 plays them).
 
 Requires After Effects (any recent version) and EffectCraft 0.6.0 or newer with `effectcraft-cli.exe`, which installs to `C:\Program Files\EffectCraft` on Windows. The import dialog needs an EffectCraft whose scripts can show file dialogs (`File.openDialog`). Those file dialogs and the **File ▸ Import ▸ After Effects Project (.ae2ec.json)…** menu item come from the `feat/aep-to-ecproj-import` branch of the [EffectCraft fork](https://github.com/iEatFishFingers/effectcraft), which is merged into the fork's `dev` branch. EffectCraft 0.7.0 built from `dev` has both; the official 0.6.0 and 0.7.0 releases don't. In an EffectCraft without file dialogs for scripts, the dialog can't ask for the export and closes straight away; use `tools\import.ps1` there.
+
+## License
+
+ae2ec is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, the same as EffectCraft.
+Copyright (c) 2026 Yohan Youmbi.
