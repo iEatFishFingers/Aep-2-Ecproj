@@ -51,7 +51,7 @@ AE doesn't redraw its window while a script runs, so Windows may label it *Not r
 ### From the menu (easiest)
 
 1. Install the import dialog once: `powershell -ExecutionPolicy Bypass -File tools\install.ps1`. It builds `effectcraft\AE2EC_ImportDialog.jsx` together with the importer, relink and verify scripts into `%APPDATA%\EffectCraft\Scripts\Import from After Effects.jsx`. Run it again whenever you change any of those scripts or the export format; EffectCraft doesn't need restarting.
-2. In EffectCraft, go to **File ▸ Import ▸ After Effects Project (.ae2ec.json)…** (or **File ▸ Scripts ▸ Import from After Effects**) and pick the export.
+2. In EffectCraft, go to **File ▸ Import ▸ Converted Project…** (or **File ▸ Scripts ▸ Import Converted Project**) and pick the export.
 3. The dialog shows the project, its After Effects version and what's in it. Choose the options (the same as `import.ps1`'s: a folder named after the project, and opening its active comp) and click **Import**. **Browse…** picks another export.
 4. While it imports, a progress window shows each step (footage, then each layer) with a log, and EffectCraft keeps drawing. **Cancel** stops it; what was imported so far stays, and **Edit ▸ Undo** removes it.
 5. The import goes into the project that's open, inside a folder named after the After Effects project, and isn't saved yet. The report lists what to look at: missing footage, effects EffectCraft doesn't have, settings to redo by hand and notes.

@@ -24,7 +24,7 @@ The export covers folders, footage (with interpretation settings), comps, every 
 **2. Import into EffectCraft.** The easiest way is from EffectCraft's menu:
 
 1. Once, and again after changing any of the scripts: `powershell -ExecutionPolicy Bypass -File tools\install.ps1`.
-2. In EffectCraft, go to **File ▸ Import ▸ After Effects Project (.ae2ec.json)…** (or **File ▸ Scripts ▸ Import from After Effects**), pick the export, check the options and click **Import**. The report opens when it's done, with **Relink Footage…**, **Verify** and **Save Report…**.
+2. In EffectCraft, go to **File ▸ Import ▸ Converted Project…** (or **File ▸ Scripts ▸ Import Converted Project**), pick the export, check the options and click **Import**. The report opens when it's done, with **Relink Footage…**, **Verify** and **Save Report…**.
 
 Or from PowerShell:
 

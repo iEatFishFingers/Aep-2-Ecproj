@@ -1,6 +1,6 @@
 /*
  * AE2EC_ImportDialog.jsx  -  "Import from After Effects" in EffectCraft
- * (File > Import > After Effects Project (.ae2ec.json)..., or File > Scripts).
+ * (File > Import > Converted Project..., or File > Scripts).
  *
  * Asks for an export made by ae/AE2EC_Export.jsx (or takes AE2EC_JSON_PATH, as tools/test.ps1
  * does), shows what is in it and the import options, imports it with AE2EC_Import.jsx while a
@@ -9,7 +9,7 @@
  *
  * It doesn't run on its own: tools\install.ps1 joins it with those scripts (EffectCraft scripts
  * can't include other files), which defines AE2EC_RUN_IMPORTER, AE2EC_RUN_RELINK and
- * AE2EC_RUN_VERIFY, and installs the result in EffectCraft as "Import from After Effects.jsx".
+ * AE2EC_RUN_VERIFY, and installs the result in EffectCraft as "Import Converted Project.jsx".
  */
 
 // The inputs of the importer, relink and verify scripts (see their headers).
